@@ -2,9 +2,9 @@
 
 import { useCallback, useState } from "react";
 import {
-  extractWatermarkId,
+  extractWatermark,
   fetchVideoRecord,
-  hashFile,
+  type ExtractedWatermark,
   type VideoRecord,
 } from "@/lib/veritas";
 
@@ -13,7 +13,13 @@ type Status = "idle" | "extracting" | "checking" | "verified" | "not-found" | "e
 interface VerificationResult {
   watermarkId: string;
   record: VideoRecord;
+  extraction?: ExtractedWatermark;
   uploadedHash?: string;
+}
+
+interface AttemptedExtraction {
+  watermarkId: string;
+  extraction?: ExtractedWatermark;
 }
 
 const STATUS_LABELS: Record<Status, string> = {
@@ -38,11 +44,13 @@ export default function VerifyPage() {
   const [manualWatermarkId, setManualWatermarkId] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [result, setResult] = useState<VerificationResult | null>(null);
+  const [attemptedExtraction, setAttemptedExtraction] = useState<AttemptedExtraction | null>(null);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
   const resetResult = () => {
     setResult(null);
+    setAttemptedExtraction(null);
     setError("");
     setStatus("idle");
   };
@@ -65,7 +73,10 @@ export default function VerifyPage() {
     if (droppedFile) handleFile(droppedFile);
   }, []);
 
-  const verifyWatermark = async (watermarkId: string, uploadedFile?: File) => {
+  const verifyWatermark = async (
+    watermarkId: string,
+    extraction?: ExtractedWatermark
+  ) => {
     const normalizedWatermarkId = watermarkId.trim().toLowerCase();
 
     if (!isValidWatermarkId(normalizedWatermarkId)) {
@@ -75,6 +86,7 @@ export default function VerifyPage() {
     }
 
     setStatus("checking");
+    setAttemptedExtraction({ watermarkId: normalizedWatermarkId, extraction });
     const record = await fetchVideoRecord(normalizedWatermarkId);
 
     if (!record) {
@@ -84,8 +96,8 @@ export default function VerifyPage() {
       return;
     }
 
-    const uploadedHash = uploadedFile ? await hashFile(uploadedFile) : undefined;
-    setResult({ watermarkId: normalizedWatermarkId, record, uploadedHash });
+    const uploadedHash = extraction?.uploadedHash;
+    setResult({ watermarkId: normalizedWatermarkId, record, extraction, uploadedHash });
     setError("");
     setStatus("verified");
   };
@@ -98,14 +110,14 @@ export default function VerifyPage() {
       setResult(null);
       setStatus("extracting");
 
-      const watermarkId = await extractWatermarkId(file);
+      const extracted = await extractWatermark(file);
 
-      if (!watermarkId) {
+      if (!extracted) {
         setStatus("not-found");
         return;
       }
 
-      await verifyWatermark(watermarkId, file);
+      await verifyWatermark(extracted.watermarkId, extracted);
     } catch (caughtError: any) {
       setError(caughtError.message ?? "Could not verify this video.");
       setStatus("error");
@@ -237,8 +249,41 @@ export default function VerifyPage() {
         </section>
 
         {status === "not-found" && (
-          <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
+          <div className="space-y-3 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
             <p className="text-sm font-medium text-amber-900">No matching Veritas record was found.</p>
+            {attemptedExtraction ? (
+              <div className="rounded-md border border-amber-100 bg-white p-3 text-xs text-slate-600">
+                <p className="font-medium text-slate-950">Watermark extraction attempt</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                  <div>
+                    <span className="block text-slate-400">Method</span>
+                    <span className="font-mono">{attemptedExtraction.extraction?.method ?? "manual"}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Recovered ID</span>
+                    <span className="break-all font-mono">{attemptedExtraction.watermarkId}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Confidence</span>
+                    <span className="font-mono">
+                      {typeof attemptedExtraction.extraction?.confidence === "number"
+                        ? `${(attemptedExtraction.extraction.confidence * 100).toFixed(1)}%`
+                        : "not available"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Frames</span>
+                    <span className="font-mono">
+                      {attemptedExtraction.extraction?.framesAnalyzed ?? "not sampled"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-amber-800">
+                No metadata or DCT watermark ID could be extracted from this file.
+              </p>
+            )}
           </div>
         )}
 
@@ -279,6 +324,42 @@ export default function VerifyPage() {
                 </p>
               </div>
             </div>
+
+            {result.extraction && (
+              <div className="rounded-md border border-emerald-100 bg-white p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Watermark detection</p>
+                <p className="mt-2 text-sm font-semibold text-slate-950">
+                  {result.extraction.method === "metadata"
+                    ? "MP4 metadata watermark"
+                    : "DCT spread-spectrum visual watermark"}
+                </p>
+                <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                  <div>
+                    <span className="block text-slate-400">Method</span>
+                    <span className="font-mono">{result.extraction.method}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Confidence</span>
+                    <span className="font-mono">
+                      {typeof result.extraction.confidence === "number"
+                        ? `${(result.extraction.confidence * 100).toFixed(1)}%`
+                        : "not needed"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Frames</span>
+                    <span className="font-mono">
+                      {result.extraction.framesAnalyzed ?? "not sampled"}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  {result.extraction.method === "metadata"
+                    ? "Metadata was found, so DCT fallback was not needed for this file."
+                    : "Metadata was missing or unreadable, so verification used the visual DCT watermark."}
+                </p>
+              </div>
+            )}
 
             <div className="space-y-2 rounded-md border border-emerald-100 bg-white p-3 text-xs">
               {([

@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
-import { hashFile, embedWatermark } from "@/lib/veritas";
+import { embedWatermark, type WatermarkJobProgress } from "@/lib/veritas";
 import { getSourceProfileForWallet } from "@/lib/sourceRegistry";
 import {
   buildRegisterTx,
@@ -13,7 +13,7 @@ import {
   signAndSendTx,
 } from "@/lib/solana";
 
-type Step = "idle" | "hashing" | "watermarking" | "building" | "signing" | "confirming" | "done" | "error";
+type Step = "idle" | "watermarking" | "building" | "signing" | "confirming" | "done" | "error";
 
 interface Result {
   watermarkId: string;
@@ -26,7 +26,6 @@ interface Result {
 
 const STEP_LABELS: Record<Step, string> = {
   idle: "",
-  hashing: "Computing SHA-256 hash...",
   watermarking: "Embedding provenance watermark...",
   building: "Preparing Solana transaction...",
   signing: "Approve the transaction in Phantom...",
@@ -35,7 +34,7 @@ const STEP_LABELS: Record<Step, string> = {
   error: "Error",
 };
 
-const PROGRESS_STEPS: Step[] = ["hashing", "watermarking", "building", "signing", "confirming"];
+const PROGRESS_STEPS: Step[] = ["watermarking", "building", "signing", "confirming"];
 
 export default function RegisterPage() {
   const [wallet, setWallet] = useState<string | null>(null);
@@ -44,6 +43,9 @@ export default function RegisterPage() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [watermarkProgress, setWatermarkProgress] = useState<WatermarkJobProgress | null>(null);
+  const [watermarkStartedAt, setWatermarkStartedAt] = useState<number | null>(null);
+  const [watermarkElapsedMs, setWatermarkElapsedMs] = useState(0);
 
   const sourceProfile = useMemo(
     () => (wallet ? getSourceProfileForWallet(wallet) : null),
@@ -53,6 +55,16 @@ export default function RegisterPage() {
   useEffect(() => {
     getConnectedWallet().then(setWallet);
   }, []);
+
+  useEffect(() => {
+    if (step !== "watermarking" || !watermarkStartedAt) return;
+
+    const timer = window.setInterval(() => {
+      setWatermarkElapsedMs(Date.now() - watermarkStartedAt);
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [step, watermarkStartedAt]);
 
   const handleConnect = async () => {
     setError("");
@@ -73,6 +85,9 @@ export default function RegisterPage() {
     setFile(selectedFile);
     setError("");
     setResult(null);
+    setWatermarkProgress(null);
+    setWatermarkElapsedMs(0);
+    setWatermarkStartedAt(null);
     setStep("idle");
   };
 
@@ -89,11 +104,17 @@ export default function RegisterPage() {
     setResult(null);
 
     try {
-      setStep("hashing");
-      const videoHash = await hashFile(file);
-
       setStep("watermarking");
-      const { watermarkId, watermarkedBlob } = await embedWatermark(file);
+      setWatermarkStartedAt(Date.now());
+      setWatermarkElapsedMs(0);
+      setWatermarkProgress({
+        message: "Starting metadata and DCT watermarking...",
+        progress: 0,
+        elapsedMs: 0,
+      });
+      const { watermarkId, videoHash, watermarkedBlob } = await embedWatermark(file, (progress) => {
+        setWatermarkProgress(progress);
+      });
 
       setStep("building");
       const tx = await buildRegisterTx(
@@ -117,6 +138,8 @@ export default function RegisterPage() {
         downloadUrl: URL.createObjectURL(watermarkedBlob),
         registeredAt: new Date().toLocaleString("en-US"),
       });
+      setWatermarkProgress(null);
+      setWatermarkStartedAt(null);
       setStep("done");
     } catch (e: any) {
       if (e.message?.toLowerCase().includes("rejected") || e.message?.toLowerCase().includes("cancelled")) {
@@ -130,6 +153,16 @@ export default function RegisterPage() {
   };
 
   const isProcessing = PROGRESS_STEPS.includes(step);
+  const visibleWatermarkProgress = watermarkProgress
+    ? Math.round(Math.max(0, Math.min(1, watermarkProgress.progress)) * 100)
+    : 0;
+  const visibleElapsedSeconds = Math.floor(
+    Math.max(watermarkProgress?.elapsedMs ?? 0, watermarkElapsedMs) / 1000
+  );
+  const visibleFrameText =
+    watermarkProgress?.currentFrame && watermarkProgress.totalFrames
+      ? `Frame ${Math.min(watermarkProgress.currentFrame, watermarkProgress.totalFrames)} of ${watermarkProgress.totalFrames}`
+      : null;
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-12">
@@ -224,11 +257,14 @@ export default function RegisterPage() {
                 <p className="truncate text-sm font-medium text-slate-950">{file.name}</p>
                 <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
               </div>
-              <button
+                      <button
                 onClick={(event) => {
                   event.stopPropagation();
                   setFile(null);
                   setResult(null);
+                  setWatermarkProgress(null);
+                  setWatermarkStartedAt(null);
+                  setWatermarkElapsedMs(0);
                   setStep("idle");
                 }}
                 className="ml-auto text-sm font-medium text-slate-500 hover:text-slate-800"
@@ -299,6 +335,29 @@ export default function RegisterPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {step === "watermarking" && watermarkProgress && (
+          <div className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-950">{watermarkProgress.message}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Elapsed {visibleElapsedSeconds}s{visibleFrameText ? ` · ${visibleFrameText}` : ""}.
+                  Backend video processing can take a while for longer clips.
+                </p>
+              </div>
+              <span className="font-mono text-sm font-semibold text-blue-700">
+                {visibleWatermarkProgress}%
+              </span>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-blue-700 transition-all duration-300"
+                style={{ width: `${visibleWatermarkProgress}%` }}
+              />
+            </div>
           </div>
         )}
 

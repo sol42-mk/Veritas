@@ -2,198 +2,154 @@
 // Three pure helpers used by both the register and verify pages.
 // No React, no side effects; easy to test in isolation.
 
-import { v4 as uuidv4 } from "uuid";
 import { Connection, PublicKey, clusterApiUrl } from "@solana/web3.js";
-
-// ─── 1. Hashing ────────────────────────────────────────────────────────────
-
-// Compute SHA-256 of a File in the browser using the Web Crypto API.
-// Returns a lowercase hex string. This goes on-chain as the proof of content.
-export async function hashFile(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 // ─── 2. Watermarking ───────────────────────────────────────────────────────
 
-// Embed a UUID into the video's MP4 metadata using ffmpeg.wasm.
-// This is the "fake but functional" approach for the hackathon:
-// it survives local file transfers but not social media re-encoding.
-// The UUID is the key that maps to the on-chain record.
+export interface WatermarkJobProgress {
+  message: string;
+  progress: number;
+  elapsedMs: number;
+  currentFrame?: number;
+  totalFrames?: number;
+}
+
+interface WatermarkJobSnapshot extends WatermarkJobProgress {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  watermarkId?: string;
+  videoHash?: string;
+  method?: "metadata+dct-spread-spectrum" | "metadata-only";
+  warning?: string;
+  error?: string;
+}
+
+// Ask the backend worker to embed the Veritas ID into metadata and frames.
+// The UUID is the key that maps the video to the on-chain record.
 //
-// Returns: { watermarkId, watermarkedBlob }
+// Returns: { watermarkId, videoHash, watermarkedBlob }
 export async function embedWatermark(
-  file: File
-): Promise<{ watermarkId: string; watermarkedBlob: Blob }> {
-  // Lazy-load ffmpeg only when needed.
-  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-  const { fetchFile } = await import("@ffmpeg/util");
+  file: File,
+  onProgress?: (progress: WatermarkJobProgress) => void
+): Promise<{ watermarkId: string; videoHash: string; watermarkedBlob: Blob }> {
+  const startedAt = Date.now();
+  const emit = (progress: Omit<WatermarkJobProgress, "elapsedMs"> & { elapsedMs?: number }) => {
+    onProgress?.({ ...progress, elapsedMs: progress.elapsedMs ?? Date.now() - startedAt });
+  };
 
-  const ffmpeg = new FFmpeg();
-  const logs: string[] = [];
+  emit({ message: "Uploading video to backend worker...", progress: 0.02 });
 
-  ffmpeg.on("log", ({ message }) => {
-    logs.push(message);
-    if (logs.length > 20) logs.shift();
+  const formData = new FormData();
+  formData.append("video", file);
+
+  const createResponse = await fetch("/api/watermark/jobs", {
+    method: "POST",
+    body: formData,
   });
 
-  // Let @ffmpeg/ffmpeg load its matching default core version.
-  try {
-    await ffmpeg.load();
-  } catch (error) {
-    const details = error instanceof Error ? error.message : String(error);
-    const isolationStatus =
-      typeof crossOriginIsolated === "boolean"
-        ? `crossOriginIsolated=${crossOriginIsolated}`
-        : "crossOriginIsolated=unavailable";
-
-    throw new Error(
-      `Could not load the browser video processor. ${isolationStatus}. ${details}`
-    );
+  if (!createResponse.ok) {
+    const body = await createResponse.json().catch(() => null);
+    throw new Error(body?.error ?? "The backend worker could not watermark this video.");
   }
 
-  // PDA seeds have a 32-byte max. A UUID with hyphens is 36 chars, so store
-  // the same 128-bit value as 32 lowercase hex chars.
-  const watermarkId = uuidv4().replace(/-/g, "");
-  const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4";
-  const inputName = `input.${extension}`;
-  const outputName = "output.mp4";
-  const timestamp = Date.now();
+  const created = await createResponse.json() as { job?: WatermarkJobSnapshot };
+  if (!created.job?.id) {
+    throw new Error("The backend worker did not return a watermark job ID.");
+  }
 
-  try {
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
+  let job = created.job;
+  emit(job);
 
-    // First try stream copy: fast, no quality loss, but not every codec can be
-    // remuxed into MP4. Custom MP4 metadata needs use_metadata_tags.
-    try {
-      await ffmpeg.exec([
-        "-y",
-        "-i", inputName,
-        "-map", "0",
-        "-c", "copy",
-        "-movflags", "use_metadata_tags",
-        "-metadata", `veritas_id=${watermarkId}`,
-        "-metadata", `veritas_ts=${timestamp}`,
-        outputName,
-      ]);
-    } catch {
-      logs.push("Stream-copy watermarking failed; retrying with MP4 transcode.");
+  while (job.status === "queued" || job.status === "running") {
+    await sleep(500);
 
-      await ffmpeg.exec([
-        "-y",
-        "-i", inputName,
-        "-map", "0:v:0",
-        "-map", "0:a?",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "use_metadata_tags",
-        "-metadata", `veritas_id=${watermarkId}`,
-        "-metadata", `veritas_ts=${timestamp}`,
-        outputName,
-      ]);
+    const statusResponse = await fetch(`/api/watermark/jobs?jobId=${encodeURIComponent(job.id)}`, {
+      cache: "no-store",
+    });
+
+    if (!statusResponse.ok) {
+      const body = await statusResponse.json().catch(() => null);
+      throw new Error(body?.error ?? "Could not read watermark job progress.");
     }
 
-    const data = await ffmpeg.readFile(outputName);
-    const bytes =
-      typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
-    const arrayBuffer = bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength
-    ) as ArrayBuffer;
-    const watermarkedBlob = new Blob([arrayBuffer], { type: "video/mp4" });
+    const body = await statusResponse.json() as { job?: WatermarkJobSnapshot };
+    if (!body.job) {
+      throw new Error("The backend worker returned an invalid job progress response.");
+    }
 
-    return { watermarkId, watermarkedBlob };
-  } catch (error) {
-    const details = logs.slice(-8).join("\n");
-    throw new Error(
-      details
-        ? `Could not embed the watermark. ffmpeg said:\n${details}`
-        : "Could not embed the watermark. Try a smaller MP4 file for the demo."
-    );
-  } finally {
-    ffmpeg.terminate();
+    job = body.job;
+    emit(job);
   }
+
+  if (job.status === "failed") {
+    throw new Error(job.error ?? "The backend worker could not watermark this video.");
+  }
+
+  emit({ ...job, message: "Downloading watermarked video from backend worker...", progress: 0.98 });
+
+  const downloadResponse = await fetch(`/api/watermark/jobs?jobId=${encodeURIComponent(job.id)}&download=1`, {
+    cache: "no-store",
+  });
+
+  if (!downloadResponse.ok) {
+    const body = await downloadResponse.json().catch(() => null);
+    throw new Error(body?.error ?? "Could not download the watermarked video.");
+  }
+
+  const watermarkId = downloadResponse.headers.get("X-Veritas-Watermark-Id") ?? job.watermarkId;
+  const videoHash = downloadResponse.headers.get("X-Veritas-Original-Sha256") ?? job.videoHash;
+  const watermarkedBlob = await downloadResponse.blob();
+
+  if (!watermarkId || !/^[a-f0-9]{32}$/i.test(watermarkId)) {
+    throw new Error("The backend worker did not return a valid watermark ID.");
+  }
+
+  if (!videoHash || !/^[a-f0-9]{64}$/i.test(videoHash)) {
+    throw new Error("The backend worker did not return a valid video hash.");
+  }
+
+  if (watermarkedBlob.size === 0) {
+    throw new Error("The backend worker returned an empty watermarked video.");
+  }
+
+  emit({ message: "Final watermarked MP4 is ready.", progress: 1 });
+  return { watermarkId: watermarkId.toLowerCase(), videoHash: videoHash.toLowerCase(), watermarkedBlob };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // Extract the Veritas watermark ID from MP4 metadata.
 export async function extractWatermarkId(file: File): Promise<string | null> {
-  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-  const { fetchFile } = await import("@ffmpeg/util");
-
-  const ffmpeg = new FFmpeg();
-  const logs: string[] = [];
-
-  ffmpeg.on("log", ({ message }) => {
-    logs.push(message);
-    if (logs.length > 20) logs.shift();
-  });
-
-  try {
-    await ffmpeg.load();
-  } catch (error) {
-    const details = error instanceof Error ? error.message : String(error);
-    const isolationStatus =
-      typeof crossOriginIsolated === "boolean"
-        ? `crossOriginIsolated=${crossOriginIsolated}`
-        : "crossOriginIsolated=unavailable";
-
-    throw new Error(
-      `Could not load the browser video processor. ${isolationStatus}. ${details}`
-    );
-  }
-
-  const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4";
-  const inputName = `verify.${extension}`;
-  const metadataName = "metadata.txt";
-
-  try {
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
-    await ffmpeg.exec([
-      "-y",
-      "-i", inputName,
-      "-f", "ffmetadata",
-      metadataName,
-    ]);
-
-    const data = await ffmpeg.readFile(metadataName, "utf8");
-    const text = typeof data === "string" ? data : new TextDecoder().decode(data);
-    const metadata = parseFfmpegMetadata(text);
-    return metadata.veritas_id ?? null;
-  } catch {
-    const details = logs.slice(-8).join("\n");
-    throw new Error(
-      details
-        ? `Could not read the Veritas watermark. ffmpeg said:\n${details}`
-        : "Could not read the Veritas watermark from this video."
-    );
-  } finally {
-    ffmpeg.terminate();
-  }
+  const extracted = await extractWatermark(file);
+  return extracted?.watermarkId ?? null;
 }
 
-function parseFfmpegMetadata(text: string): Record<string, string> {
-  const metadata: Record<string, string> = {};
+export interface ExtractedWatermark {
+  watermarkId: string;
+  method: "metadata" | "dct-spread-spectrum";
+  uploadedHash: string;
+  confidence?: number;
+  framesAnalyzed?: number;
+}
 
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith(";") || line.startsWith("#") || line.startsWith("[")) {
-      continue;
-    }
+export async function extractWatermark(file: File): Promise<ExtractedWatermark | null> {
+  const formData = new FormData();
+  formData.append("video", file);
 
-    const separatorIndex = line.indexOf("=");
-    if (separatorIndex <= 0) continue;
+  const response = await fetch("/api/extract-watermark", {
+    method: "POST",
+    body: formData,
+  });
 
-    const key = line.slice(0, separatorIndex).trim().toLowerCase();
-    const value = line.slice(separatorIndex + 1).trim();
-    metadata[key] = value;
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? "The backend worker could not extract a Veritas watermark.");
   }
 
-  return metadata;
+  const body = await response.json() as { watermark?: ExtractedWatermark | null };
+  return body.watermark ?? null;
 }
 
 // ─── 3. Solana devnet client ───────────────────────────────────────────────

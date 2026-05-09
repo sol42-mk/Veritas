@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ffmpeg.wasm needs SharedArrayBuffer, which requires these headers
+  // Keep cross-origin isolation enabled; it is harmless for the backend
+  // watermark worker and useful if browser-side media tooling is added later.
   async headers() {
     return [
       {
@@ -11,11 +12,6 @@ const nextConfig = {
         ],
       },
     ];
-  },
-  webpack(config) {
-    // Allow ffmpeg.wasm to load its .wasm file
-    config.resolve.fallback = { ...config.resolve.fallback, fs: false };
-    return config;
   },
 };
 
