@@ -123,7 +123,7 @@ Then rebuild and restart the app.
 ```text
 app/page.tsx               Home page
 app/register/page.tsx      Journalist upload and register UI
-app/verify/page.tsx        Verification placeholder
+app/verify/page.tsx        Watermark extraction and Solana record lookup UI
 app/layout.tsx             App shell and navigation
 lib/solana.ts              Phantom transaction helpers and PDA lookup
 lib/sourceRegistry.ts      Wallet-to-source assignment registry
@@ -149,7 +149,7 @@ Done:
 
 - English home and register UI
 - Home page at `/`
-- Verification placeholder at `/verify`
+- Verification page at `/verify`
 - Register page UI
 - Phantom wallet connection
 - Wallet-derived source assignment for registration
@@ -164,12 +164,13 @@ Done:
 - Real Anchor instruction discriminator wired into the frontend register transaction
 - Anchor program source
 - Minimal Anchor/Rust workspace config
+- Verification extracts `veritas_id` from video metadata and fetches the matching Solana record
+- Verification validates account ownership, discriminator, and record bounds before decoding
 
 Next:
 
 - Run `npm run dev` and test `/register` with Phantom on devnet.
-- Build `app/verify/page.tsx`.
-- Add watermark extraction for verification.
+- Test `/verify` with a newly downloaded watermarked video from `/register`.
 - Add AI/web fallback for videos that cannot be verified.
 
 ## Demo Script
@@ -185,7 +186,10 @@ During the demo:
 2. Connect Phantom on devnet.
 3. Upload `kanal5_demo.mp4`.
 4. Register it and show the Solana Explorer link.
-5. Verify the registered video versus the unknown video to show the trust contrast.
+5. Download the watermarked video.
+6. Open `/verify`.
+7. Upload the watermarked video and show the Solana record.
+8. Verify the unknown video to show the trust contrast.
 
 ## README Rule
 
@@ -196,3 +200,5 @@ Keep this README current after meaningful project changes, especially changes to
 Browser console source map warnings from React DevTools, such as `installHook.js.map` or `react_devtools_backend_compact.js.map`, are not Veritas app failures.
 
 If watermarking fails, check the app error text first. It should include the last ffmpeg log lines. For the smoothest demo, use a short MP4 file from a common H.264/AAC source.
+
+The registered hash is the SHA-256 of the original pre-watermark upload. The downloaded watermarked file has different bytes, so `/verify` displays both hashes when a file is uploaded but treats the watermark-to-record match as the current MVP verification signal.

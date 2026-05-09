@@ -120,6 +120,82 @@ export async function embedWatermark(
   }
 }
 
+// Extract the Veritas watermark ID from MP4 metadata.
+export async function extractWatermarkId(file: File): Promise<string | null> {
+  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+  const { fetchFile } = await import("@ffmpeg/util");
+
+  const ffmpeg = new FFmpeg();
+  const logs: string[] = [];
+
+  ffmpeg.on("log", ({ message }) => {
+    logs.push(message);
+    if (logs.length > 20) logs.shift();
+  });
+
+  try {
+    await ffmpeg.load();
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    const isolationStatus =
+      typeof crossOriginIsolated === "boolean"
+        ? `crossOriginIsolated=${crossOriginIsolated}`
+        : "crossOriginIsolated=unavailable";
+
+    throw new Error(
+      `Could not load the browser video processor. ${isolationStatus}. ${details}`
+    );
+  }
+
+  const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4";
+  const inputName = `verify.${extension}`;
+  const metadataName = "metadata.txt";
+
+  try {
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    await ffmpeg.exec([
+      "-y",
+      "-i", inputName,
+      "-f", "ffmetadata",
+      metadataName,
+    ]);
+
+    const data = await ffmpeg.readFile(metadataName, "utf8");
+    const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+    const metadata = parseFfmpegMetadata(text);
+    return metadata.veritas_id ?? null;
+  } catch {
+    const details = logs.slice(-8).join("\n");
+    throw new Error(
+      details
+        ? `Could not read the Veritas watermark. ffmpeg said:\n${details}`
+        : "Could not read the Veritas watermark from this video."
+    );
+  } finally {
+    ffmpeg.terminate();
+  }
+}
+
+function parseFfmpegMetadata(text: string): Record<string, string> {
+  const metadata: Record<string, string> = {};
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(";") || line.startsWith("#") || line.startsWith("[")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) continue;
+
+    const key = line.slice(0, separatorIndex).trim().toLowerCase();
+    const value = line.slice(separatorIndex + 1).trim();
+    metadata[key] = value;
+  }
+
+  return metadata;
+}
+
 // ─── 3. Solana devnet client ───────────────────────────────────────────────
 
 // The Program ID must match Anchor.toml and programs/veritas/src/lib.rs.
@@ -128,6 +204,10 @@ export const PROGRAM_ID = new PublicKey(
 );
 
 export const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+
+const VIDEO_RECORD_DISCRIMINATOR = Buffer.from([
+  0x40, 0x86, 0x1b, 0x88, 0x73, 0xc7, 0x00, 0x1d,
+]);
 
 // Derive the PDA address for a given watermark ID.
 // This is deterministic: the same ID always gives the same address,
@@ -148,6 +228,11 @@ export async function fetchVideoRecord(
     const [pda] = getVideoPDA(watermarkId);
     const accountInfo = await connection.getAccountInfo(pda);
     if (!accountInfo) return null;
+    if (!accountInfo.owner.equals(PROGRAM_ID)) return null;
+    if (accountInfo.data.length < VIDEO_RECORD_DISCRIMINATOR.length) return null;
+    if (!Buffer.from(accountInfo.data.slice(0, 8)).equals(VIDEO_RECORD_DISCRIMINATOR)) {
+      return null;
+    }
 
     // Manual deserialization: skip the 8-byte Anchor discriminator,
     // then read each field in the order they're defined in the Rust struct.
@@ -167,18 +252,22 @@ export interface VideoRecord {
 }
 
 // Anchor serializes strings as: 4-byte LE length prefix + UTF-8 bytes.
-function readString(buf: Buffer, offset: number): [string, number] {
+function readString(buf: Buffer, offset: number, maxLength = 256): [string, number] {
+  if (offset + 4 > buf.length) throw new Error("Invalid string offset");
   const len = buf.readUInt32LE(offset);
+  if (len > maxLength) throw new Error("Invalid string length");
+  if (offset + 4 + len > buf.length) throw new Error("Invalid string data");
   const str = buf.slice(offset + 4, offset + 4 + len).toString("utf8");
   return [str, offset + 4 + len];
 }
 
 function deserializeVideoRecord(data: Buffer): VideoRecord {
   let offset = 8; // skip 8-byte discriminator
-  const [watermarkId, o1] = readString(data, offset); offset = o1;
-  const [videoHash, o2] = readString(data, offset);   offset = o2;
-  const [sourceId, o3] = readString(data, offset);    offset = o3;
-  const [sourceName, o4] = readString(data, offset);  offset = o4;
+  const [watermarkId, o1] = readString(data, offset, 32); offset = o1;
+  const [videoHash, o2] = readString(data, offset, 64);   offset = o2;
+  const [sourceId, o3] = readString(data, offset, 32);    offset = o3;
+  const [sourceName, o4] = readString(data, offset, 64);  offset = o4;
+  if (offset + 8 + 32 > data.length) throw new Error("Invalid record data");
   const timestamp = Number(data.readBigInt64LE(offset)); offset += 8;
   const registeredBy = new PublicKey(data.slice(offset, offset + 32)).toBase58();
 
