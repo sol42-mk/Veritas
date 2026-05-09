@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Solana wallets and generated keys
+wallet.json
+*.json.keypair
+target/deploy/*.json
+
+# Anchor/Rust build output
+target/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
