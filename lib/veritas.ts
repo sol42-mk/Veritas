@@ -27,51 +27,97 @@ export async function hashFile(file: File): Promise<string> {
 export async function embedWatermark(
   file: File
 ): Promise<{ watermarkId: string; watermarkedBlob: Blob }> {
-  // Lazy-load ffmpeg only when needed (it's ~30MB)
+  // Lazy-load ffmpeg only when needed.
   const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-  const { fetchFile, toBlobURL } = await import("@ffmpeg/util");
+  const { fetchFile } = await import("@ffmpeg/util");
 
   const ffmpeg = new FFmpeg();
+  const logs: string[] = [];
 
-  // Load ffmpeg.wasm core from CDN
-  await ffmpeg.load({
-    coreURL: await toBlobURL(
-      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
-      "text/javascript"
-    ),
-    wasmURL: await toBlobURL(
-      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm",
-      "application/wasm"
-    ),
+  ffmpeg.on("log", ({ message }) => {
+    logs.push(message);
+    if (logs.length > 20) logs.shift();
   });
 
-  const watermarkId = uuidv4();
-  const inputName = "input.mp4";
+  // Let @ffmpeg/ffmpeg load its matching default core version.
+  try {
+    await ffmpeg.load();
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    const isolationStatus =
+      typeof crossOriginIsolated === "boolean"
+        ? `crossOriginIsolated=${crossOriginIsolated}`
+        : "crossOriginIsolated=unavailable";
+
+    throw new Error(
+      `Could not load the browser video processor. ${isolationStatus}. ${details}`
+    );
+  }
+
+  // PDA seeds have a 32-byte max. A UUID with hyphens is 36 chars, so store
+  // the same 128-bit value as 32 lowercase hex chars.
+  const watermarkId = uuidv4().replace(/-/g, "");
+  const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4";
+  const inputName = `input.${extension}`;
   const outputName = "output.mp4";
+  const timestamp = Date.now();
 
-  // Write the input file into ffmpeg's virtual filesystem
-  await ffmpeg.writeFile(inputName, await fetchFile(file));
+  try {
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-  // Copy the video stream and embed our watermark_id as a metadata tag.
-  // -c copy = no re-encoding, fast. The metadata tag is our lookup key.
-  await ffmpeg.exec([
-    "-i", inputName,
-    "-c", "copy",
-    "-metadata", `veritas_id=${watermarkId}`,
-    "-metadata", `veritas_ts=${Date.now()}`,
-    outputName,
-  ]);
+    // First try stream copy: fast, no quality loss, but not every codec can be
+    // remuxed into MP4. Custom MP4 metadata needs use_metadata_tags.
+    try {
+      await ffmpeg.exec([
+        "-y",
+        "-i", inputName,
+        "-map", "0",
+        "-c", "copy",
+        "-movflags", "use_metadata_tags",
+        "-metadata", `veritas_id=${watermarkId}`,
+        "-metadata", `veritas_ts=${timestamp}`,
+        outputName,
+      ]);
+    } catch {
+      logs.push("Stream-copy watermarking failed; retrying with MP4 transcode.");
 
-  const data = await ffmpeg.readFile(outputName);
-  const bytes =
-    typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
-  const arrayBuffer = bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength
-  ) as ArrayBuffer;
-  const watermarkedBlob = new Blob([arrayBuffer], { type: "video/mp4" });
+      await ffmpeg.exec([
+        "-y",
+        "-i", inputName,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "use_metadata_tags",
+        "-metadata", `veritas_id=${watermarkId}`,
+        "-metadata", `veritas_ts=${timestamp}`,
+        outputName,
+      ]);
+    }
 
-  return { watermarkId, watermarkedBlob };
+    const data = await ffmpeg.readFile(outputName);
+    const bytes =
+      typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
+    const arrayBuffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength
+    ) as ArrayBuffer;
+    const watermarkedBlob = new Blob([arrayBuffer], { type: "video/mp4" });
+
+    return { watermarkId, watermarkedBlob };
+  } catch (error) {
+    const details = logs.slice(-8).join("\n");
+    throw new Error(
+      details
+        ? `Could not embed the watermark. ffmpeg said:\n${details}`
+        : "Could not embed the watermark. Try a smaller MP4 file for the demo."
+    );
+  } finally {
+    ffmpeg.terminate();
+  }
 }
 
 // ─── 3. Solana devnet client ───────────────────────────────────────────────

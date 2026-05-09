@@ -17,6 +17,22 @@ export const PROGRAM_ID = new PublicKey(
 
 export const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
 
+async function assertProgramDeployed(): Promise<void> {
+  const accountInfo = await connection.getAccountInfo(PROGRAM_ID);
+
+  if (!accountInfo) {
+    throw new Error(
+      `The Veritas program is not deployed on Solana devnet yet. Deploy ${PROGRAM_ID.toBase58()} before registering videos.`
+    );
+  }
+
+  if (!accountInfo.executable) {
+    throw new Error(
+      `The configured Veritas program account ${PROGRAM_ID.toBase58()} exists, but it is not executable. Check the deployed program ID.`
+    );
+  }
+}
+
 // ─── Phantom provider ──────────────────────────────────────────────────────
 
 // Phantom usually injects window.solana, and newer builds also expose
@@ -79,6 +95,8 @@ export async function buildRegisterTx(
   sourceId: string,
   sourceName: string,
 ): Promise<Transaction> {
+  await assertProgramDeployed();
+
   const [pda] = getVideoPDA(watermarkId);
 
   const data = Buffer.concat([

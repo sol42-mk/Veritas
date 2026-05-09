@@ -141,7 +141,8 @@ Verified locally:
 - `anchor build` passes after the first Cargo dependency download.
 - `npm run dev` starts at `http://localhost:3000`.
 - The Solana CLI is configured for devnet.
-- The Solana CLI deploy wallet has not been created yet.
+- The Solana CLI deploy wallet is `D4yxMnpxmvHgrPnQtGJWx3eCuLaVQ2z5CkufMnKaxi64`.
+- The configured program ID is deployed on devnet.
 - The Rust program uses `anchor-lang = "1.0.2"` to match `anchor-cli 1.0.2`.
 
 Done:
@@ -154,17 +155,19 @@ Done:
 - Wallet-derived source assignment for registration
 - Browser-side video hashing
 - Metadata-based watermarking with `ffmpeg.wasm`
+- Watermark IDs are stored as 32-character UUID hex strings so they fit Solana PDA seed limits
+- ffmpeg loads its matching default browser core instead of a hardcoded older CDN core
+- Watermarking now tries fast MP4 stream-copy first, then falls back to MP4 transcode for less compatible video formats
+- Watermarking errors include recent ffmpeg logs for debugging
 - Client-side transaction construction and signing helpers
+- Register flow checks that the configured Solana program exists on devnet before opening Phantom
 - Real Anchor instruction discriminator wired into the frontend register transaction
 - Anchor program source
 - Minimal Anchor/Rust workspace config
 
 Next:
 
-- Create and fund the Solana CLI wallet for deploys.
 - Run `npm run dev` and test `/register` with Phantom on devnet.
-- Run `anchor build` and fix any version-specific build issues.
-- Deploy the program to devnet.
 - Build `app/verify/page.tsx`.
 - Add watermark extraction for verification.
 - Add AI/web fallback for videos that cannot be verified.
@@ -187,3 +190,9 @@ During the demo:
 ## README Rule
 
 Keep this README current after meaningful project changes, especially changes to setup, commands, deployed program IDs, routes, or demo flow.
+
+## Debug Notes
+
+Browser console source map warnings from React DevTools, such as `installHook.js.map` or `react_devtools_backend_compact.js.map`, are not Veritas app failures.
+
+If watermarking fails, check the app error text first. It should include the last ffmpeg log lines. For the smoothest demo, use a short MP4 file from a common H.264/AAC source.
