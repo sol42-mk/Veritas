@@ -130,6 +130,7 @@ lib/sourceRegistry.ts      Wallet-to-source assignment registry
 lib/serverDctWatermark.ts  Backend ffmpeg and DCT spread-spectrum video worker
 lib/watermarkJobs.ts       In-memory backend watermark job progress tracker
 lib/veritas.ts             Frontend API helpers and record decoding helpers
+workers/cuda-dct/          Optional CuPy/CUDA DCT worker for local GPU acceleration
 programs/veritas/src/lib.rs Anchor smart contract
 Anchor.toml                Anchor workspace config
 .env.example               Optional environment variables
@@ -171,6 +172,14 @@ Done:
 - Minimal Anchor/Rust workspace config
 - Verification extracts `veritas_id` from video metadata and fetches the matching Solana record
 - Verification validates account ownership, discriminator, and record bounds before decoding
+
+Backend CUDA DCT test on this WSL machine:
+
+- GPU: NVIDIA GeForce RTX 3050 Laptop GPU.
+- System ffmpeg at `/usr/bin/ffmpeg` supports `h264_nvenc`.
+- CUDA/CuPy venv uses `cupy-cuda12x`, `nvidia-cuda-nvrtc-cu12`, `nvidia-cuda-runtime-cu12`, and `nvidia-cublas-cu12`.
+- App endpoint completed CUDA DCT + NVENC watermarking.
+- Metadata-stripped CUDA output recovered the exact DCT ID at about 99.5% confidence.
 
 Backend DCT test on a real 32-second news clip:
 
@@ -224,4 +233,29 @@ The DCT spread-spectrum watermark is experimental. Registration sends the video 
 
 If `/verify` reports `MP4 metadata watermark`, the DCT detector was not needed and no confidence score is shown. To see DCT confidence, test with a copy where metadata has been stripped.
 
-The current backend DCT settings use 640px-wide processing, 6 FPS sampling, 12 repetitions per bit, and DCT coefficient delta 120. If artifacts become visible or confidence is low, tune these values in `lib/serverDctWatermark.ts`.
+The current backend DCT settings use 640px-wide processing, source FPS capped at 30 FPS, 20 repetitions per bit, DCT coefficient delta 48, and a capped zero-mean luminance adjustment per 8x8 block. This keeps the output visually closer to the original while preserving robustness through repetition. If artifacts are visible or confidence is low, tune these values in `lib/serverDctWatermark.ts`.
+
+Backend encoding and DCT embedding are CPU-safe by default. For local NVIDIA testing, put machine-specific overrides in `.env.local`, which is gitignored:
+
+```bash
+VERITAS_DCT_BACKEND=cuda
+VERITAS_DCT_FALLBACK=cpu
+VERITAS_CUDA_PYTHON=/home/shenol/projects/veritas/.venv-cuda/bin/python
+VERITAS_CUDA_DCT_WORKER=/home/shenol/projects/veritas/workers/cuda-dct/veritas_cuda_dct.py
+VERITAS_FFMPEG_PATH=/usr/bin/ffmpeg
+VERITAS_FFPROBE_PATH=/usr/bin/ffprobe
+VERITAS_VIDEO_ENCODER=nvenc
+VERITAS_NVENC_PRESET=p4
+VERITAS_NVENC_CQ=23
+```
+
+`VERITAS_DCT_BACKEND=cuda` uses the optional CuPy worker in `workers/cuda-dct/` for the DCT, coefficient modification, inverse DCT, and luminance adjustment. `VERITAS_VIDEO_ENCODER=nvenc` separately accelerates FFmpeg encoding when your local ffmpeg supports `h264_nvenc`. If CUDA fails and `VERITAS_DCT_FALLBACK=cpu`, Veritas falls back to the TypeScript CPU DCT implementation.
+
+The tested local CUDA venv was fixed with:
+
+```bash
+source .venv-cuda/bin/activate
+python -m pip install numpy cupy-cuda12x nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12 nvidia-cublas-cu12
+```
+
+Use `workers/cuda-dct/README.md` for the CUDA worker setup details.

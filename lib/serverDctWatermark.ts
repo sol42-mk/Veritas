@@ -5,17 +5,20 @@ import { tmpdir } from "os";
 import path from "path";
 
 const TARGET_WIDTH = 640;
-const TARGET_FPS = 6;
-const BIT_REPETITIONS = 12;
-const DCT_STRENGTH = 120;
+const DEFAULT_MAX_OUTPUT_FPS = 30;
+const BIT_REPETITIONS = 20;
+const DCT_STRENGTH = 48;
+const MAX_LUMA_DELTA = 14;
 const DETECTION_FRAMES = 12;
 const COEFF_A: [number, number] = [3, 4];
 const COEFF_B: [number, number] = [4, 3];
+const CUDA_WORKER_PATH = path.join(process.cwd(), "workers", "cuda-dct", "veritas_cuda_dct.py");
 
 interface VideoInfo {
   width: number;
   height: number;
   duration: number;
+  fps: number;
 }
 
 interface EmbeddingPoint {
@@ -146,15 +149,73 @@ async function embedDctWatermark(
   watermarkId: string,
   onProgress: ProgressReporter
 ) {
+  if (process.env.VERITAS_DCT_BACKEND === "cuda") {
+    try {
+      await embedCudaDctWatermark(inputPath, outputPath, watermarkId, onProgress);
+      return;
+    } catch (error) {
+      if (process.env.VERITAS_DCT_FALLBACK === "none") {
+        throw error;
+      }
+
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      onProgress({
+        message: `CUDA DCT worker failed; falling back to CPU DCT. ${reason}`,
+        progress: 0.09,
+      });
+    }
+  }
+
+  await embedCpuDctWatermark(inputPath, outputPath, watermarkId, onProgress);
+}
+
+async function embedCudaDctWatermark(
+  inputPath: string,
+  outputPath: string,
+  watermarkId: string,
+  onProgress: ProgressReporter
+) {
+  onProgress({ message: "Starting CUDA DCT worker...", progress: 0.08 });
+  const info = await getVideoInfo(inputPath);
+  const { width, height } = getProcessingSize(info.width, info.height);
+  const outputFps = getWatermarkFps(info.fps);
+  const totalFrames = Math.max(1, Math.ceil(info.duration * outputFps));
+  const python = process.env.VERITAS_CUDA_PYTHON || "python3";
+  const workerPath = process.env.VERITAS_CUDA_DCT_WORKER || CUDA_WORKER_PATH;
+  const args = [
+    workerPath,
+    "--input", inputPath,
+    "--output", outputPath,
+    "--watermark-id", watermarkId,
+    "--width", String(width),
+    "--height", String(height),
+    "--fps", String(outputFps),
+    "--total-frames", String(totalFrames),
+    "--bit-repetitions", String(BIT_REPETITIONS),
+    "--dct-strength", String(DCT_STRENGTH),
+    "--max-luma-delta", String(MAX_LUMA_DELTA),
+    "--ffmpeg", getFfmpegPath(),
+  ];
+
+  await runProgressCommand(python, args, onProgress);
+}
+
+async function embedCpuDctWatermark(
+  inputPath: string,
+  outputPath: string,
+  watermarkId: string,
+  onProgress: ProgressReporter
+) {
   onProgress({ message: "Reading video dimensions and duration...", progress: 0.08 });
   const info = await getVideoInfo(inputPath);
   const { width, height } = getProcessingSize(info.width, info.height);
+  const outputFps = getWatermarkFps(info.fps);
   createEmbeddingPlan(width, height);
   const frameSize = width * height * 3;
-  const totalFrames = Math.max(1, Math.ceil(info.duration * TARGET_FPS));
+  const totalFrames = Math.max(1, Math.ceil(info.duration * outputFps));
   const decodeArgs = [
     "-i", inputPath,
-    "-vf", `scale=${width}:${height},fps=${TARGET_FPS}`,
+    "-vf", `scale=${width}:${height},fps=${outputFps}`,
     "-f", "rawvideo",
     "-pix_fmt", "rgb24",
     "pipe:1",
@@ -164,14 +225,12 @@ async function embedDctWatermark(
     "-f", "rawvideo",
     "-pix_fmt", "rgb24",
     "-s", `${width}x${height}`,
-    "-r", String(TARGET_FPS),
+    "-r", String(outputFps),
     "-i", "pipe:0",
     "-i", inputPath,
     "-map", "0:v:0",
     "-map", "1:a?",
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-crf", "28",
+    ...getVideoEncoderArgs(),
     "-c:a", "aac",
     "-b:a", "128k",
     "-shortest",
@@ -267,9 +326,7 @@ async function embedMetadataOnly(inputPath: string, outputPath: string, watermar
     "-i", inputPath,
     "-map", "0:v:0",
     "-map", "0:a?",
-    "-c:v", "libx264",
-    "-preset", "ultrafast",
-    "-crf", "28",
+    ...getVideoEncoderArgs(),
     "-c:a", "aac",
     "-b:a", "128k",
     "-movflags", "use_metadata_tags",
@@ -346,7 +403,13 @@ async function getVideoInfo(inputPath: string): Promise<VideoInfo> {
     inputPath,
   ]);
   const parsed = JSON.parse(result.stdout.toString("utf8")) as {
-    streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
+    streams?: Array<{
+      codec_type?: string;
+      width?: number;
+      height?: number;
+      avg_frame_rate?: string;
+      r_frame_rate?: string;
+    }>;
     format?: { duration?: string };
   };
   const video = parsed.streams?.find((stream) => stream.codec_type === "video");
@@ -359,7 +422,35 @@ async function getVideoInfo(inputPath: string): Promise<VideoInfo> {
     width: video.width,
     height: video.height,
     duration: Number.parseFloat(parsed.format?.duration ?? "1") || 1,
+    fps: parseFrameRate(video.avg_frame_rate ?? video.r_frame_rate) ?? 24,
   };
+}
+
+function parseFrameRate(value?: string): number | null {
+  if (!value || value === "0/0") return null;
+  const [numerator, denominator] = value.split("/").map(Number);
+
+  if (!Number.isFinite(numerator)) return null;
+  if (!Number.isFinite(denominator) || denominator === 0) {
+    return numerator > 0 ? numerator : null;
+  }
+
+  const fps = numerator / denominator;
+  return fps > 0 ? fps : null;
+}
+
+function getWatermarkFps(sourceFps: number): number {
+  const explicitFps = Number(process.env.VERITAS_WATERMARK_FPS);
+  if (Number.isFinite(explicitFps) && explicitFps > 0) {
+    return roundFps(explicitFps);
+  }
+
+  const maxFps = Number(process.env.VERITAS_MAX_WATERMARK_FPS) || DEFAULT_MAX_OUTPUT_FPS;
+  return roundFps(Math.max(1, Math.min(sourceFps || 24, maxFps)));
+}
+
+function roundFps(fps: number): number {
+  return Math.round(fps * 1000) / 1000;
 }
 
 function getProcessingSize(videoWidth: number, videoHeight: number) {
@@ -385,11 +476,29 @@ function getExtractionSize(videoWidth: number, videoHeight: number) {
 }
 
 function getFfmpegPath(): string {
-  return path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg");
+  return process.env.VERITAS_FFMPEG_PATH || path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg");
 }
 
 function getFfprobePath(): string {
-  return path.join(process.cwd(), "node_modules", "ffprobe-static", "bin", "linux", "x64", "ffprobe");
+  return process.env.VERITAS_FFPROBE_PATH || path.join(process.cwd(), "node_modules", "ffprobe-static", "bin", "linux", "x64", "ffprobe");
+}
+
+function getVideoEncoderArgs(): string[] {
+  if (process.env.VERITAS_VIDEO_ENCODER === "nvenc") {
+    return [
+      "-c:v", "h264_nvenc",
+      "-preset", process.env.VERITAS_NVENC_PRESET || "p4",
+      "-cq", process.env.VERITAS_NVENC_CQ || "23",
+      "-pix_fmt", "yuv420p",
+    ];
+  }
+
+  return [
+    "-c:v", "libx264",
+    "-preset", process.env.VERITAS_X264_PRESET || "ultrafast",
+    "-crf", process.env.VERITAS_X264_CRF || "23",
+    "-pix_fmt", "yuv420p",
+  ];
 }
 
 function takeFrame(chunks: Buffer[], frameSize: number): Buffer {
@@ -454,6 +563,57 @@ function runCommand(command: string, args: string[]): Promise<CommandResult> {
       }
 
       resolve({ stdout: Buffer.concat(stdout), stderr: stderrText });
+    });
+  });
+}
+
+function runProgressCommand(
+  command: string,
+  args: string[],
+  onProgress: ProgressReporter
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        VERITAS_VIDEO_ENCODER: process.env.VERITAS_VIDEO_ENCODER || "",
+        VERITAS_X264_PRESET: process.env.VERITAS_X264_PRESET || "",
+        VERITAS_X264_CRF: process.env.VERITAS_X264_CRF || "",
+        VERITAS_NVENC_PRESET: process.env.VERITAS_NVENC_PRESET || "",
+        VERITAS_NVENC_CQ: process.env.VERITAS_NVENC_CQ || "",
+      },
+    });
+    const stderr: Buffer[] = [];
+    let stdoutRemainder = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdoutRemainder += Buffer.from(chunk).toString("utf8");
+      const lines = stdoutRemainder.split(/\r?\n/);
+      stdoutRemainder = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const parsed = JSON.parse(line) as WatermarkProgress;
+          if (parsed.message && typeof parsed.progress === "number") {
+            onProgress(parsed);
+          }
+        } catch {
+          stderr.push(Buffer.from(`${line}\n`));
+        }
+      }
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code && code !== 0) {
+        const stderrText = Buffer.concat(stderr).toString("utf8").slice(-3000);
+        reject(new Error(`${path.basename(command)} exited with code ${code}.\n${stderrText}`));
+        return;
+      }
+
+      resolve();
     });
   });
 }
@@ -590,10 +750,13 @@ function applyLuminanceDelta(
   originalY: number[],
   updatedY: number[]
 ) {
+  const deltas = updatedY.map((value, index) => value - originalY[index]);
+  const meanDelta = deltas.reduce((sum, delta) => sum + delta, 0) / deltas.length;
+
   for (let y = 0; y < 8; y += 1) {
     for (let x = 0; x < 8; x += 1) {
       const blockIndex = y * 8 + x;
-      const delta = updatedY[blockIndex] - originalY[blockIndex];
+      const delta = clamp(deltas[blockIndex] - meanDelta, -MAX_LUMA_DELTA, MAX_LUMA_DELTA);
       const pixelIndex = ((startY + y) * width + startX + x) * 3;
 
       frame[pixelIndex] = clampByte(frame[pixelIndex] + delta);
@@ -605,6 +768,10 @@ function applyLuminanceDelta(
 
 function clampByte(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function dct2d(block: number[]): number[] {
