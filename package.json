@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "start": "next start"
+    "start": "next start",
+    "records": "node scripts/list-veritas-records.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",

@@ -35,6 +35,19 @@ def hex_to_bits(hex_value):
     return np.asarray(bits, dtype=np.float32)
 
 
+def bits_to_hex(bits):
+    hex_value = ""
+    for idx in range(0, len(bits), 4):
+        nibble = (
+            (int(bits[idx]) << 3)
+            | (int(bits[idx + 1]) << 2)
+            | (int(bits[idx + 2]) << 1)
+            | int(bits[idx + 3])
+        )
+        hex_value += format(nibble, "x")
+    return hex_value
+
+
 def shuffle_points(points, seed):
     state = seed & 0xFFFFFFFF
 
@@ -48,7 +61,7 @@ def shuffle_points(points, seed):
         points[i], points[j] = points[j], points[i]
 
 
-def create_embedding_plan(width, height, bit_repetitions):
+def create_embedding_plan(width, height, bit_repetitions, x_offset=0, y_offset=0):
     cols = width // 8
     rows = height // 8
     points = []
@@ -63,8 +76,8 @@ def create_embedding_plan(width, height, bit_repetitions):
         raise RuntimeError("Video is too small for robust watermark embedding.")
 
     selected = points[:required]
-    xs = np.asarray([point[0] for point in selected], dtype=np.int32)
-    ys = np.asarray([point[1] for point in selected], dtype=np.int32)
+    xs = np.asarray([point[0] + x_offset for point in selected], dtype=np.int32)
+    ys = np.asarray([point[1] + y_offset for point in selected], dtype=np.int32)
     bit_indices = np.asarray([idx % 128 for idx in range(required)], dtype=np.int32)
     return xs, ys, bit_indices
 
@@ -129,6 +142,21 @@ def embed_frame(frame_bytes, width, height, bits_gpu, xs_gpu, ys_gpu, bit_indice
     return cp.asnumpy(frame_gpu).tobytes()
 
 
+def read_frame_votes(frame_bytes, width, height, xs_gpu, ys_gpu, bit_indices_gpu, dct_matrix):
+    frame_cpu = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((height, width, 3))
+    frame_gpu = cp.asarray(frame_cpu)
+    y_blocks = gather_luma_blocks(frame_gpu, xs_gpu, ys_gpu)
+    coeffs = dct_matrix[None, :, :] @ y_blocks @ dct_matrix.T[None, :, :]
+
+    a_index = (COEFF_A[1], COEFF_A[0])
+    b_index = (COEFF_B[1], COEFF_B[0])
+    coeff_a = coeffs[:, a_index[0], a_index[1]]
+    coeff_b = coeffs[:, b_index[0], b_index[1]]
+    block_votes = cp.where(coeff_a >= coeff_b, 1.0, -1.0)
+
+    return cp.bincount(bit_indices_gpu, weights=block_votes, minlength=128)
+
+
 def encoder_args():
     if os.environ.get("VERITAS_VIDEO_ENCODER") == "nvenc":
         return [
@@ -146,20 +174,15 @@ def encoder_args():
     ]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--watermark-id", required=True)
-    parser.add_argument("--width", type=int, required=True)
-    parser.add_argument("--height", type=int, required=True)
-    parser.add_argument("--fps", type=float, required=True)
-    parser.add_argument("--total-frames", type=int, required=True)
-    parser.add_argument("--bit-repetitions", type=int, required=True)
-    parser.add_argument("--dct-strength", type=float, required=True)
-    parser.add_argument("--max-luma-delta", type=float, required=True)
-    parser.add_argument("--ffmpeg", required=True)
-    args = parser.parse_args()
+def run_embed(args):
+    if not args.output:
+        raise RuntimeError("--output is required for embed mode.")
+    if not args.watermark_id:
+        raise RuntimeError("--watermark-id is required for embed mode.")
+    if args.dct_strength is None:
+        raise RuntimeError("--dct-strength is required for embed mode.")
+    if args.max_luma_delta is None:
+        raise RuntimeError("--max-luma-delta is required for embed mode.")
 
     frame_size = args.width * args.height * 3
     xs, ys, bit_indices = create_embedding_plan(args.width, args.height, args.bit_repetitions)
@@ -262,6 +285,120 @@ def main():
             pass
         print(str(exc), file=sys.stderr)
         sys.exit(1)
+
+
+def run_extract(args):
+    frame_size = args.width * args.height * 3
+    xs, ys, bit_indices = create_embedding_plan(
+        args.width,
+        args.height,
+        args.bit_repetitions,
+        args.x_offset,
+        args.y_offset,
+    )
+    xs_gpu = cp.asarray(xs)
+    ys_gpu = cp.asarray(ys)
+    bit_indices_gpu = cp.asarray(bit_indices)
+    dct_matrix = make_dct_matrix()
+    votes_gpu = cp.zeros(128, dtype=cp.float32)
+
+    decode_args = [
+        args.ffmpeg,
+        "-i", args.input,
+        "-vf", f"scale={args.width}:{args.height},fps={args.fps}",
+        "-frames:v", str(args.total_frames),
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "pipe:1",
+    ]
+
+    decoder = subprocess.Popen(decode_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    pending = bytearray()
+    frame_index = 0
+
+    emit("CUDA DCT worker extracting frames...", 0.1, 0, args.total_frames)
+
+    try:
+        while True:
+            chunk = decoder.stdout.read(frame_size)
+            if not chunk:
+                break
+            pending.extend(chunk)
+
+            while len(pending) >= frame_size and frame_index < args.total_frames:
+                frame = bytes(pending[:frame_size])
+                del pending[:frame_size]
+                votes_gpu += read_frame_votes(
+                    frame,
+                    args.width,
+                    args.height,
+                    xs_gpu,
+                    ys_gpu,
+                    bit_indices_gpu,
+                    dct_matrix,
+                )
+                frame_index += 1
+
+                if frame_index == 1 or frame_index >= args.total_frames or frame_index % 3 == 0:
+                    emit(
+                        f"CUDA DCT extraction frame {min(frame_index, args.total_frames)} of {args.total_frames}...",
+                        0.1 + min(frame_index / args.total_frames, 1) * 0.8,
+                        frame_index,
+                        args.total_frames,
+                    )
+
+        decoder_stderr = decoder.stderr.read().decode("utf8", errors="replace")
+        decoder_code = decoder.wait()
+
+        if decoder_code != 0:
+            raise RuntimeError(f"ffmpeg decoder failed with code {decoder_code}\n{decoder_stderr[-2000:]}")
+        if frame_index == 0:
+            raise RuntimeError("No frames were decoded for CUDA DCT extraction.")
+
+        votes = cp.asnumpy(votes_gpu)
+        bits = [1 if vote >= 0 else 0 for vote in votes]
+        max_votes = frame_index * args.bit_repetitions
+        confidence = float(np.sum(np.abs(votes)) / (len(votes) * max_votes))
+        print(json.dumps({
+            "watermarkId": bits_to_hex(bits),
+            "confidence": confidence,
+            "framesAnalyzed": frame_index,
+            "width": args.width,
+            "height": args.height,
+            "xOffset": args.x_offset,
+            "yOffset": args.y_offset,
+        }), flush=True)
+    except Exception as exc:
+        try:
+            decoder.kill()
+        except Exception:
+            pass
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["embed", "extract"], default="embed")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output")
+    parser.add_argument("--watermark-id")
+    parser.add_argument("--width", type=int, required=True)
+    parser.add_argument("--height", type=int, required=True)
+    parser.add_argument("--fps", type=float, required=True)
+    parser.add_argument("--total-frames", type=int, required=True)
+    parser.add_argument("--bit-repetitions", type=int, required=True)
+    parser.add_argument("--dct-strength", type=float)
+    parser.add_argument("--max-luma-delta", type=float)
+    parser.add_argument("--x-offset", type=int, default=0)
+    parser.add_argument("--y-offset", type=int, default=0)
+    parser.add_argument("--ffmpeg", required=True)
+    args = parser.parse_args()
+
+    if args.mode == "extract":
+        run_extract(args)
+    else:
+        run_embed(args)
 
 
 if __name__ == "__main__":

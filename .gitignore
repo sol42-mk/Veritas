@@ -29,6 +29,9 @@ pnpm-debug.log*
 __pycache__/
 *.py[cod]
 
+# Local test videos
+videos/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

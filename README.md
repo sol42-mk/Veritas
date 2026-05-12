@@ -109,6 +109,18 @@ anchor build
 anchor deploy --provider.cluster devnet
 ```
 
+List all Veritas video records currently stored by the devnet program:
+
+```bash
+npm run records
+```
+
+For machine-readable output:
+
+```bash
+npm run records -- --json
+```
+
 If you regenerate the program keypair or deploy under a different program ID, update:
 
 - `Anchor.toml`
@@ -130,6 +142,7 @@ lib/sourceRegistry.ts      Wallet-to-source assignment registry
 lib/serverDctWatermark.ts  Backend ffmpeg and DCT spread-spectrum video worker
 lib/watermarkJobs.ts       In-memory backend watermark job progress tracker
 lib/veritas.ts             Frontend API helpers and record decoding helpers
+scripts/list-veritas-records.js Utility for listing devnet VideoRecord accounts
 workers/cuda-dct/          Optional CuPy/CUDA DCT worker for local GPU acceleration
 programs/veritas/src/lib.rs Anchor smart contract
 Anchor.toml                Anchor workspace config
@@ -191,10 +204,20 @@ Backend DCT test on a real 32-second news clip:
 
 This is good enough for the hackathon demo: Veritas survives metadata stripping, normal re-encoding, and meaningful compression/resizing, but extreme platform-style degradation can destroy the visual watermark.
 
+CUDA verification test on `videos/video6_26s.mp4`:
+
+- Source clip: 640x360, 24 FPS, 25.6 seconds, 6.4 MB. The `videos/` folder is gitignored for local test media.
+- Test watermark ID: `1234567890abcdef1234567890abcdef`.
+- Exact watermarked MP4: metadata contained the expected `veritas_id`.
+- Metadata stripped with stream copy: exact DCT match at about 98.6% confidence over 48 sampled frames.
+- Metadata stripped and re-encoded with `libx264`, `preset medium`, `crf 28`, AAC 128k: exact DCT match at about 89.8% confidence over 48 sampled frames.
+- Metadata stripped, resized to 480px wide, re-encoded with `libx264`, `preset medium`, `crf 32`, AAC 96k: DCT recovered the wrong ID at about 10.2% confidence. Nearby CUDA extraction widths and block offsets did not recover this sample, so the confidence threshold treats it as inconclusive.
+- Metadata stripped, resized to 360px wide, re-encoded with `libx264`, `preset veryfast`, `crf 36`, AAC 64k: DCT recovered the wrong ID at about 6.5% confidence.
+
 Next:
 
 - Keep collecting real clips and platform-download samples to tune DCT thresholds.
-- Add clearer UI language when DCT confidence is low or the recovered ID has no on-chain match.
+- Add a confidence threshold so low-confidence DCT recoveries are treated as inconclusive before Solana lookup.
 - Add AI/web fallback for videos that cannot be verified.
 
 ## Demo Script
@@ -233,7 +256,7 @@ The DCT spread-spectrum watermark is experimental. Registration sends the video 
 
 If `/verify` reports `MP4 metadata watermark`, the DCT detector was not needed and no confidence score is shown. To see DCT confidence, test with a copy where metadata has been stripped.
 
-The current backend DCT settings use 640px-wide processing, source FPS capped at 30 FPS, 20 repetitions per bit, DCT coefficient delta 48, and a capped zero-mean luminance adjustment per 8x8 block. This keeps the output visually closer to the original while preserving robustness through repetition. If artifacts are visible or confidence is low, tune these values in `lib/serverDctWatermark.ts`.
+The current backend DCT settings use 640px-wide processing, source FPS capped at 30 FPS, 20 repetitions per bit, DCT coefficient delta 48, and a capped zero-mean luminance adjustment per 8x8 block. CPU verification samples up to 12 frames. Optional CUDA verification samples up to 48 frames by default, because the GPU worker can afford a stronger extraction pass. If artifacts are visible or confidence is low, tune these values in `lib/serverDctWatermark.ts`.
 
 Backend encoding and DCT embedding are CPU-safe by default. For local NVIDIA testing, put machine-specific overrides in `.env.local`, which is gitignored:
 
@@ -247,9 +270,14 @@ VERITAS_FFPROBE_PATH=/usr/bin/ffprobe
 VERITAS_VIDEO_ENCODER=nvenc
 VERITAS_NVENC_PRESET=p4
 VERITAS_NVENC_CQ=23
+VERITAS_CUDA_DETECTION_FRAMES=48
+VERITAS_DCT_CONFIDENCE_THRESHOLD=0.35
+# Optional advanced tuning:
+# VERITAS_CUDA_EXTRACTION_WIDTHS=640,632,648
+# VERITAS_CUDA_EXTRACTION_OFFSETS=0:0,2:0,-2:0,0:2,0:-2
 ```
 
-`VERITAS_DCT_BACKEND=cuda` uses the optional CuPy worker in `workers/cuda-dct/` for the DCT, coefficient modification, inverse DCT, and luminance adjustment. `VERITAS_VIDEO_ENCODER=nvenc` separately accelerates FFmpeg encoding when your local ffmpeg supports `h264_nvenc`. If CUDA fails and `VERITAS_DCT_FALLBACK=cpu`, Veritas falls back to the TypeScript CPU DCT implementation.
+`VERITAS_DCT_BACKEND=cuda` uses the optional CuPy worker in `workers/cuda-dct/` for registration DCT embedding and verification DCT extraction. For registration, CUDA handles the DCT, coefficient modification, inverse DCT, and luminance adjustment. For verification, CUDA handles the DCT vote extraction and can sample more frames than the CPU verifier. CUDA verification tries nearby extraction widths and small block offsets, then keeps the highest-confidence candidate. Candidates below `VERITAS_DCT_CONFIDENCE_THRESHOLD` are treated as inconclusive and are not used for Solana lookup. `VERITAS_VIDEO_ENCODER=nvenc` separately accelerates FFmpeg encoding when your local ffmpeg supports `h264_nvenc`. If CUDA fails and `VERITAS_DCT_FALLBACK=cpu`, Veritas falls back to the TypeScript CPU DCT implementation.
 
 The tested local CUDA venv was fixed with:
 

@@ -117,6 +117,12 @@ export default function VerifyPage() {
         return;
       }
 
+      if (extracted.trusted === false) {
+        setAttemptedExtraction({ watermarkId: extracted.watermarkId, extraction: extracted });
+        setStatus("not-found");
+        return;
+      }
+
       await verifyWatermark(extracted.watermarkId, extracted);
     } catch (caughtError: any) {
       setError(caughtError.message ?? "Could not verify this video.");
@@ -250,7 +256,13 @@ export default function VerifyPage() {
 
         {status === "not-found" && (
           <div className="space-y-3 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
-            <p className="text-sm font-medium text-amber-900">No matching Veritas record was found.</p>
+            <p className="text-sm font-medium text-amber-900">
+              We couldn't verify the video as being from a trusted source.
+            </p>
+            <p className="text-xs leading-5 text-amber-800">
+              Note: This does not mean that the video is necessarily untruthful. It only means Veritas cannot
+              confirm that it came from one of our trusted sources.
+            </p>
             {attemptedExtraction ? (
               <div className="rounded-md border border-amber-100 bg-white p-3 text-xs text-slate-600">
                 <p className="font-medium text-slate-950">Watermark extraction attempt</p>
@@ -278,6 +290,19 @@ export default function VerifyPage() {
                     </span>
                   </div>
                 </div>
+                {attemptedExtraction.extraction?.rejectionReason && (
+                  <p className="mt-2 text-xs leading-5 text-amber-800">
+                    {attemptedExtraction.extraction.rejectionReason}
+                  </p>
+                )}
+                {attemptedExtraction.extraction?.candidatesTested && (
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Tested {attemptedExtraction.extraction.candidatesTested} DCT extraction candidates
+                    {attemptedExtraction.extraction.extractionWidth
+                      ? `; best candidate used ${attemptedExtraction.extraction.extractionWidth}x${attemptedExtraction.extraction.extractionHeight}.`
+                      : "."}
+                  </p>
+                )}
               </div>
             ) : (
               <p className="text-xs text-amber-800">

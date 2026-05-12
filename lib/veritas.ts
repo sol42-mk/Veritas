@@ -123,15 +123,22 @@ function sleep(ms: number): Promise<void> {
 // Extract the Veritas watermark ID from MP4 metadata.
 export async function extractWatermarkId(file: File): Promise<string | null> {
   const extracted = await extractWatermark(file);
-  return extracted?.watermarkId ?? null;
+  return extracted?.trusted === false ? null : extracted?.watermarkId ?? null;
 }
 
 export interface ExtractedWatermark {
   watermarkId: string;
   method: "metadata" | "dct-spread-spectrum";
   uploadedHash: string;
+  trusted: boolean;
+  rejectionReason?: string;
   confidence?: number;
   framesAnalyzed?: number;
+  extractionWidth?: number;
+  extractionHeight?: number;
+  xOffset?: number;
+  yOffset?: number;
+  candidatesTested?: number;
 }
 
 export async function extractWatermark(file: File): Promise<ExtractedWatermark | null> {
