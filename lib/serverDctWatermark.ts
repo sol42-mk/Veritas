@@ -24,7 +24,12 @@ const CUDA_EXTRACTION_OFFSETS: Array<[number, number]> = [
 ];
 const COEFF_A: [number, number] = [3, 4];
 const COEFF_B: [number, number] = [4, 3];
-const CUDA_WORKER_PATH = path.join(process.cwd(), "workers", "cuda-dct", "veritas_cuda_dct.py");
+const CUDA_WORKER_PATH = path.join(
+  process.cwd(),
+  "workers",
+  "cuda-dct",
+  "veritas_cuda_dct.py",
+);
 
 interface VideoInfo {
   width: number;
@@ -88,7 +93,7 @@ type ProgressReporter = (progress: WatermarkProgress) => void;
 
 export async function embedServerWatermark(
   file: File,
-  onProgress?: ProgressReporter
+  onProgress?: ProgressReporter,
 ): Promise<ServerWatermarkResult> {
   const workDir = await makeWorkDir();
   const inputPath = path.join(workDir, safeInputName(file.name));
@@ -100,7 +105,10 @@ export async function embedServerWatermark(
   try {
     emit({ message: "Reading uploaded video...", progress: 0.03 });
     const input = Buffer.from(await file.arrayBuffer());
-    emit({ message: "Computing SHA-256 hash on the backend...", progress: 0.06 });
+    emit({
+      message: "Computing SHA-256 hash on the backend...",
+      progress: 0.06,
+    });
     const videoHash = sha256(input);
     await writeFile(inputPath, input);
 
@@ -108,16 +116,21 @@ export async function embedServerWatermark(
       await embedDctWatermark(inputPath, robustOutputPath, watermarkId, emit);
       emit({ message: "Reading final watermarked MP4...", progress: 0.96 });
       const video = await readFile(robustOutputPath);
-      if (video.length === 0) throw new Error("DCT worker produced an empty video.");
+      if (video.length === 0)
+        throw new Error("DCT worker produced an empty video.");
       emit({ message: "Watermarked MP4 is ready.", progress: 1 });
       return { watermarkId, videoHash, video, robust: true };
     } catch (error) {
       const warning = error instanceof Error ? error.message : String(error);
-      emit({ message: "DCT watermark failed; falling back to metadata-only MP4...", progress: 0.55 });
+      emit({
+        message: "DCT watermark failed; falling back to metadata-only MP4...",
+        progress: 0.55,
+      });
       await embedMetadataOnly(inputPath, metadataOutputPath, watermarkId);
       emit({ message: "Reading metadata-only MP4...", progress: 0.9 });
       const video = await readFile(metadataOutputPath);
-      if (video.length === 0) throw new Error("Metadata fallback produced an empty video.");
+      if (video.length === 0)
+        throw new Error("Metadata fallback produced an empty video.");
       emit({ message: "Metadata-only MP4 is ready.", progress: 1 });
       return { watermarkId, videoHash, video, robust: false, warning };
     }
@@ -126,7 +139,9 @@ export async function embedServerWatermark(
   }
 }
 
-export async function extractServerWatermark(file: File): Promise<ServerWatermarkDetection | null> {
+export async function extractServerWatermark(
+  file: File,
+): Promise<ServerWatermarkDetection | null> {
   const workDir = await makeWorkDir();
   const inputPath = path.join(workDir, safeInputName(file.name));
 
@@ -137,7 +152,12 @@ export async function extractServerWatermark(file: File): Promise<ServerWatermar
 
     const metadataWatermarkId = await extractMetadataWatermark(inputPath);
     if (metadataWatermarkId) {
-      return { watermarkId: metadataWatermarkId, method: "metadata", uploadedHash, trusted: true };
+      return {
+        watermarkId: metadataWatermarkId,
+        method: "metadata",
+        uploadedHash,
+        trusted: true,
+      };
     }
 
     const detection = await extractDctWatermark(inputPath);
@@ -166,7 +186,10 @@ function makeProgressEmitter(onProgress?: ProgressReporter): ProgressReporter {
   let lastProgress = 0;
 
   return (progress) => {
-    const nextProgress = Math.max(lastProgress, Math.max(0, Math.min(1, progress.progress)));
+    const nextProgress = Math.max(
+      lastProgress,
+      Math.max(0, Math.min(1, progress.progress)),
+    );
     lastProgress = nextProgress;
     onProgress?.({ ...progress, progress: nextProgress });
   };
@@ -176,18 +199,24 @@ async function embedDctWatermark(
   inputPath: string,
   outputPath: string,
   watermarkId: string,
-  onProgress: ProgressReporter
+  onProgress: ProgressReporter,
 ) {
   if (process.env.VERITAS_DCT_BACKEND === "cuda") {
     try {
-      await embedCudaDctWatermark(inputPath, outputPath, watermarkId, onProgress);
+      await embedCudaDctWatermark(
+        inputPath,
+        outputPath,
+        watermarkId,
+        onProgress,
+      );
       return;
     } catch (error) {
       if (process.env.VERITAS_DCT_FALLBACK === "none") {
         throw error;
       }
 
-      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      const reason =
+        error instanceof Error ? error.message.split("\n")[0] : String(error);
       onProgress({
         message: `CUDA DCT worker failed; falling back to CPU DCT. ${reason}`,
         progress: 0.09,
@@ -202,7 +231,7 @@ async function embedCudaDctWatermark(
   inputPath: string,
   outputPath: string,
   watermarkId: string,
-  onProgress: ProgressReporter
+  onProgress: ProgressReporter,
 ) {
   onProgress({ message: "Starting CUDA DCT worker...", progress: 0.08 });
   const info = await getVideoInfo(inputPath);
@@ -213,17 +242,28 @@ async function embedCudaDctWatermark(
   const workerPath = process.env.VERITAS_CUDA_DCT_WORKER || CUDA_WORKER_PATH;
   const args = [
     workerPath,
-    "--input", inputPath,
-    "--output", outputPath,
-    "--watermark-id", watermarkId,
-    "--width", String(width),
-    "--height", String(height),
-    "--fps", String(outputFps),
-    "--total-frames", String(totalFrames),
-    "--bit-repetitions", String(BIT_REPETITIONS),
-    "--dct-strength", String(DCT_STRENGTH),
-    "--max-luma-delta", String(MAX_LUMA_DELTA),
-    "--ffmpeg", getFfmpegPath(),
+    "--input",
+    inputPath,
+    "--output",
+    outputPath,
+    "--watermark-id",
+    watermarkId,
+    "--width",
+    String(width),
+    "--height",
+    String(height),
+    "--fps",
+    String(outputFps),
+    "--total-frames",
+    String(totalFrames),
+    "--bit-repetitions",
+    String(BIT_REPETITIONS),
+    "--dct-strength",
+    String(DCT_STRENGTH),
+    "--max-luma-delta",
+    String(MAX_LUMA_DELTA),
+    "--ffmpeg",
+    getFfmpegPath(),
   ];
 
   await runProgressCommand(python, args, onProgress);
@@ -233,9 +273,12 @@ async function embedCpuDctWatermark(
   inputPath: string,
   outputPath: string,
   watermarkId: string,
-  onProgress: ProgressReporter
+  onProgress: ProgressReporter,
 ) {
-  onProgress({ message: "Reading video dimensions and duration...", progress: 0.08 });
+  onProgress({
+    message: "Reading video dimensions and duration...",
+    progress: 0.08,
+  });
   const info = await getVideoInfo(inputPath);
   const { width, height } = getProcessingSize(info.width, info.height);
   const outputFps = getWatermarkFps(info.fps);
@@ -243,29 +286,46 @@ async function embedCpuDctWatermark(
   const frameSize = width * height * 3;
   const totalFrames = Math.max(1, Math.ceil(info.duration * outputFps));
   const decodeArgs = [
-    "-i", inputPath,
-    "-vf", `scale=${width}:${height},fps=${outputFps}`,
-    "-f", "rawvideo",
-    "-pix_fmt", "rgb24",
+    "-i",
+    inputPath,
+    "-vf",
+    `scale=${width}:${height},fps=${outputFps}`,
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgb24",
     "pipe:1",
   ];
   const encodeArgs = [
     "-y",
-    "-f", "rawvideo",
-    "-pix_fmt", "rgb24",
-    "-s", `${width}x${height}`,
-    "-r", String(outputFps),
-    "-i", "pipe:0",
-    "-i", inputPath,
-    "-map", "0:v:0",
-    "-map", "1:a?",
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgb24",
+    "-s",
+    `${width}x${height}`,
+    "-r",
+    String(outputFps),
+    "-i",
+    "pipe:0",
+    "-i",
+    inputPath,
+    "-map",
+    "0:v:0",
+    "-map",
+    "1:a?",
     ...getVideoEncoderArgs(),
-    "-c:a", "aac",
-    "-b:a", "128k",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
     "-shortest",
-    "-movflags", "use_metadata_tags",
-    "-metadata", `veritas_id=${watermarkId}`,
-    "-metadata", "veritas_watermark=metadata+dct-spread-spectrum",
+    "-movflags",
+    "use_metadata_tags",
+    "-metadata",
+    `veritas_id=${watermarkId}`,
+    "-metadata",
+    "veritas_watermark=metadata+dct-spread-spectrum",
     outputPath,
   ];
 
@@ -288,8 +348,16 @@ async function embedCpuDctWatermark(
       currentFrame: 0,
       totalFrames,
     });
-    const decoderDone = waitForProcess(decoder, "ffmpeg decoder", decoderErrors);
-    const encoderDone = waitForProcess(encoder, "ffmpeg encoder", encoderErrors);
+    const decoderDone = waitForProcess(
+      decoder,
+      "ffmpeg decoder",
+      decoderErrors,
+    );
+    const encoderDone = waitForProcess(
+      encoder,
+      "ffmpeg encoder",
+      encoderErrors,
+    );
 
     for await (const chunk of decoder.stdout) {
       pending.push(Buffer.from(chunk));
@@ -306,7 +374,11 @@ async function embedCpuDctWatermark(
 
         frameIndex += 1;
         const now = Date.now();
-        if (frameIndex === 1 || frameIndex >= totalFrames || now - lastProgressAt > 400) {
+        if (
+          frameIndex === 1 ||
+          frameIndex >= totalFrames ||
+          now - lastProgressAt > 400
+        ) {
           lastProgressAt = now;
           onProgress({
             message: `Embedding DCT watermark into frame ${Math.min(frameIndex, totalFrames)} of ${totalFrames}...`,
@@ -349,28 +421,44 @@ async function embedCpuDctWatermark(
   }
 }
 
-async function embedMetadataOnly(inputPath: string, outputPath: string, watermarkId: string) {
+async function embedMetadataOnly(
+  inputPath: string,
+  outputPath: string,
+  watermarkId: string,
+) {
   const args = [
     "-y",
-    "-i", inputPath,
-    "-map", "0:v:0",
-    "-map", "0:a?",
+    "-i",
+    inputPath,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a?",
     ...getVideoEncoderArgs(),
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "use_metadata_tags",
-    "-metadata", `veritas_id=${watermarkId}`,
-    "-metadata", "veritas_watermark=metadata-only",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-movflags",
+    "use_metadata_tags",
+    "-metadata",
+    `veritas_id=${watermarkId}`,
+    "-metadata",
+    "veritas_watermark=metadata-only",
     outputPath,
   ];
 
   await runCommand(getFfmpegPath(), args);
 }
 
-async function extractMetadataWatermark(inputPath: string): Promise<string | null> {
+async function extractMetadataWatermark(
+  inputPath: string,
+): Promise<string | null> {
   const result = await runCommand(getFfprobePath(), [
-    "-v", "quiet",
-    "-print_format", "json",
+    "-v",
+    "quiet",
+    "-print_format",
+    "json",
     "-show_format",
     inputPath,
   ]);
@@ -384,7 +472,7 @@ async function extractMetadataWatermark(inputPath: string): Promise<string | nul
 }
 
 async function extractDctWatermark(
-  inputPath: string
+  inputPath: string,
 ): Promise<Omit<ServerWatermarkDetection, "uploadedHash"> | null> {
   if (process.env.VERITAS_DCT_BACKEND === "cuda") {
     try {
@@ -400,7 +488,7 @@ async function extractDctWatermark(
 }
 
 async function extractCudaDctWatermark(
-  inputPath: string
+  inputPath: string,
 ): Promise<Omit<ServerWatermarkDetection, "uploadedHash"> | null> {
   const info = await getVideoInfo(inputPath);
   const frames = getCudaDetectionFrames();
@@ -412,24 +500,43 @@ async function extractCudaDctWatermark(
   let candidatesTested = 0;
 
   for (const width of widths) {
-    const { width: extractionWidth, height } = getExtractionSizeForWidth(info.width, info.height, width);
-    if (!canCreateEmbeddingPlan(extractionWidth, height, BIT_REPETITIONS)) continue;
+    const { width: extractionWidth, height } = getExtractionSizeForWidth(
+      info.width,
+      info.height,
+      width,
+    );
+    if (!canCreateEmbeddingPlan(extractionWidth, height, BIT_REPETITIONS))
+      continue;
 
-    const sampleFps = getDetectionSampleFps(info.duration, frames, CUDA_DETECTION_MAX_FPS);
+    const sampleFps = getDetectionSampleFps(
+      info.duration,
+      frames,
+      CUDA_DETECTION_MAX_FPS,
+    );
 
     for (const [xOffset, yOffset] of offsets) {
       const args = [
         workerPath,
-        "--mode", "extract",
-        "--input", inputPath,
-        "--width", String(extractionWidth),
-        "--height", String(height),
-        "--fps", String(sampleFps),
-        "--total-frames", String(frames),
-        "--bit-repetitions", String(BIT_REPETITIONS),
-        "--x-offset", String(xOffset),
-        "--y-offset", String(yOffset),
-        "--ffmpeg", getFfmpegPath(),
+        "--mode",
+        "extract",
+        "--input",
+        inputPath,
+        "--width",
+        String(extractionWidth),
+        "--height",
+        String(height),
+        "--fps",
+        String(sampleFps),
+        "--total-frames",
+        String(frames),
+        "--bit-repetitions",
+        String(BIT_REPETITIONS),
+        "--x-offset",
+        String(xOffset),
+        "--y-offset",
+        String(yOffset),
+        "--ffmpeg",
+        getFfmpegPath(),
       ];
       const result = await runCudaExtractionCommand(python, args);
       candidatesTested += 1;
@@ -449,9 +556,10 @@ async function extractCudaDctWatermark(
     watermarkId: best.watermarkId.toLowerCase(),
     method: "dct-spread-spectrum",
     trusted: best.confidence >= confidenceThreshold,
-    rejectionReason: best.confidence >= confidenceThreshold
-      ? undefined
-      : `DCT confidence below ${(confidenceThreshold * 100).toFixed(0)}% threshold.`,
+    rejectionReason:
+      best.confidence >= confidenceThreshold
+        ? undefined
+        : `DCT confidence below ${(confidenceThreshold * 100).toFixed(0)}% threshold.`,
     confidence: best.confidence,
     framesAnalyzed: best.framesAnalyzed,
     extractionWidth: best.width,
@@ -463,18 +571,27 @@ async function extractCudaDctWatermark(
 }
 
 async function extractCpuDctWatermark(
-  inputPath: string
+  inputPath: string,
 ): Promise<Omit<ServerWatermarkDetection, "uploadedHash"> | null> {
   const info = await getVideoInfo(inputPath);
   const { width, height } = getExtractionSize(info.width, info.height);
   const frameSize = width * height * 3;
-  const sampleFps = getDetectionSampleFps(info.duration, DETECTION_FRAMES, CPU_DETECTION_MAX_FPS);
+  const sampleFps = getDetectionSampleFps(
+    info.duration,
+    DETECTION_FRAMES,
+    CPU_DETECTION_MAX_FPS,
+  );
   const args = [
-    "-i", inputPath,
-    "-vf", `scale=${width}:${height},fps=${sampleFps}`,
-    "-frames:v", String(DETECTION_FRAMES),
-    "-f", "rawvideo",
-    "-pix_fmt", "rgb24",
+    "-i",
+    inputPath,
+    "-vf",
+    `scale=${width}:${height},fps=${sampleFps}`,
+    "-frames:v",
+    String(DETECTION_FRAMES),
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgb24",
     "pipe:1",
   ];
   const result = await runCommand(getFfmpegPath(), args);
@@ -492,15 +609,17 @@ async function extractCpuDctWatermark(
   const watermarkId = bitsToHex(bits);
   const maxVotes = frameCount * BIT_REPETITIONS;
   const confidence =
-    votes.reduce((sum, vote) => sum + Math.abs(vote), 0) / (votes.length * maxVotes);
+    votes.reduce((sum, vote) => sum + Math.abs(vote), 0) /
+    (votes.length * maxVotes);
 
   return {
     watermarkId,
     method: "dct-spread-spectrum",
     trusted: confidence >= getDctConfidenceThreshold(),
-    rejectionReason: confidence >= getDctConfidenceThreshold()
-      ? undefined
-      : `DCT confidence below ${(getDctConfidenceThreshold() * 100).toFixed(0)}% threshold.`,
+    rejectionReason:
+      confidence >= getDctConfidenceThreshold()
+        ? undefined
+        : `DCT confidence below ${(getDctConfidenceThreshold() * 100).toFixed(0)}% threshold.`,
     confidence,
     framesAnalyzed: frameCount,
     extractionWidth: width,
@@ -511,8 +630,10 @@ async function extractCpuDctWatermark(
 
 async function getVideoInfo(inputPath: string): Promise<VideoInfo> {
   const result = await runCommand(getFfprobePath(), [
-    "-v", "quiet",
-    "-print_format", "json",
+    "-v",
+    "quiet",
+    "-print_format",
+    "json",
     "-show_streams",
     "-show_format",
     inputPath,
@@ -560,13 +681,16 @@ function getWatermarkFps(sourceFps: number): number {
     return roundFps(explicitFps);
   }
 
-  const maxFps = Number(process.env.VERITAS_MAX_WATERMARK_FPS) || DEFAULT_MAX_OUTPUT_FPS;
+  const maxFps =
+    Number(process.env.VERITAS_MAX_WATERMARK_FPS) || DEFAULT_MAX_OUTPUT_FPS;
   return roundFps(Math.max(1, Math.min(sourceFps || 24, maxFps)));
 }
 
 function getCudaDetectionFrames(): number {
   const frames = Number(process.env.VERITAS_CUDA_DETECTION_FRAMES);
-  return Number.isFinite(frames) && frames > 0 ? Math.floor(frames) : CUDA_DETECTION_FRAMES;
+  return Number.isFinite(frames) && frames > 0
+    ? Math.floor(frames)
+    : CUDA_DETECTION_FRAMES;
 }
 
 function getDctConfidenceThreshold(): number {
@@ -577,25 +701,39 @@ function getDctConfidenceThreshold(): number {
 }
 
 function getCudaExtractionWidths(sourceWidth: number): number[] {
-  const configured = parseNumberList(process.env.VERITAS_CUDA_EXTRACTION_WIDTHS);
+  const configured = parseNumberList(
+    process.env.VERITAS_CUDA_EXTRACTION_WIDTHS,
+  );
   const widths = configured.length ? configured : CUDA_EXTRACTION_WIDTHS;
-  return uniqueNumbers(widths.map((width) => Math.min(Math.max(320, width), Math.max(sourceWidth, TARGET_WIDTH) + 80)));
+  return uniqueNumbers(
+    widths.map((width) =>
+      Math.min(Math.max(320, width), Math.max(sourceWidth, TARGET_WIDTH) + 80),
+    ),
+  );
 }
 
 function getCudaExtractionOffsets(): Array<[number, number]> {
-  const configured = process.env.VERITAS_CUDA_EXTRACTION_OFFSETS
-    ?.split(",")
+  const configured = process.env.VERITAS_CUDA_EXTRACTION_OFFSETS?.split(",")
     .map((pair): [number, number] | null => {
       const [x, y] = pair.split(":").map(Number);
-      return Number.isFinite(x) && Number.isFinite(y) ? [Math.trunc(x), Math.trunc(y)] : null;
+      return Number.isFinite(x) && Number.isFinite(y)
+        ? [Math.trunc(x), Math.trunc(y)]
+        : null;
     })
     .filter((pair): pair is [number, number] => Boolean(pair));
 
   return configured?.length ? configured : CUDA_EXTRACTION_OFFSETS;
 }
 
-function getDetectionSampleFps(duration: number, frames: number, maxFps: number): number {
-  return Math.max(1, Math.min(maxFps, Math.ceil(frames / Math.max(1, duration))));
+function getDetectionSampleFps(
+  duration: number,
+  frames: number,
+  maxFps: number,
+): number {
+  return Math.max(
+    1,
+    Math.min(maxFps, Math.ceil(frames / Math.max(1, duration))),
+  );
 }
 
 function roundFps(fps: number): number {
@@ -617,7 +755,11 @@ function getExtractionSize(videoWidth: number, videoHeight: number) {
   return getExtractionSizeForWidth(videoWidth, videoHeight, TARGET_WIDTH);
 }
 
-function getExtractionSizeForWidth(videoWidth: number, videoHeight: number, targetWidth: number) {
+function getExtractionSizeForWidth(
+  videoWidth: number,
+  videoHeight: number,
+  targetWidth: number,
+) {
   const scale = targetWidth / videoWidth;
   const width = Math.max(320, Math.floor(videoWidth * scale));
   const height = Math.max(180, Math.floor(videoHeight * scale));
@@ -628,18 +770,24 @@ function getExtractionSizeForWidth(videoWidth: number, videoHeight: number, targ
   };
 }
 
-function canCreateEmbeddingPlan(width: number, height: number, bitRepetitions: number): boolean {
+function canCreateEmbeddingPlan(
+  width: number,
+  height: number,
+  bitRepetitions: number,
+): boolean {
   const cols = Math.floor(width / 8);
   const rows = Math.floor(height / 8);
   return Math.max(0, cols - 6) * Math.max(0, rows - 6) >= 128 * bitRepetitions;
 }
 
 function parseNumberList(value?: string): number[] {
-  return value
-    ?.split(",")
-    .map((item) => Number(item.trim()))
-    .filter((item) => Number.isFinite(item) && item > 0)
-    .map((item) => Math.trunc(item)) ?? [];
+  return (
+    value
+      ?.split(",")
+      .map((item) => Number(item.trim()))
+      .filter((item) => Number.isFinite(item) && item > 0)
+      .map((item) => Math.trunc(item)) ?? []
+  );
 }
 
 function uniqueNumbers(values: number[]): number[] {
@@ -647,28 +795,51 @@ function uniqueNumbers(values: number[]): number[] {
 }
 
 function getFfmpegPath(): string {
-  return process.env.VERITAS_FFMPEG_PATH || path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg");
+  return (
+    process.env.VERITAS_FFMPEG_PATH ||
+    path.join(process.cwd(), "node_modules", "ffmpeg-static", "ffmpeg")
+  );
 }
 
 function getFfprobePath(): string {
-  return process.env.VERITAS_FFPROBE_PATH || path.join(process.cwd(), "node_modules", "ffprobe-static", "bin", "linux", "x64", "ffprobe");
+  if (process.env.VERITAS_FFPROBE_PATH) return process.env.VERITAS_FFPROBE_PATH;
+  const platform = process.platform; // "darwin" | "linux" | "win32"
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const bin = platform === "win32" ? "ffprobe.exe" : "ffprobe";
+  return path.join(
+    process.cwd(),
+    "node_modules",
+    "ffprobe-static",
+    "bin",
+    platform,
+    arch,
+    bin,
+  );
 }
 
 function getVideoEncoderArgs(): string[] {
   if (process.env.VERITAS_VIDEO_ENCODER === "nvenc") {
     return [
-      "-c:v", "h264_nvenc",
-      "-preset", process.env.VERITAS_NVENC_PRESET || "p4",
-      "-cq", process.env.VERITAS_NVENC_CQ || "23",
-      "-pix_fmt", "yuv420p",
+      "-c:v",
+      "h264_nvenc",
+      "-preset",
+      process.env.VERITAS_NVENC_PRESET || "p4",
+      "-cq",
+      process.env.VERITAS_NVENC_CQ || "23",
+      "-pix_fmt",
+      "yuv420p",
     ];
   }
 
   return [
-    "-c:v", "libx264",
-    "-preset", process.env.VERITAS_X264_PRESET || "ultrafast",
-    "-crf", process.env.VERITAS_X264_CRF || "23",
-    "-pix_fmt", "yuv420p",
+    "-c:v",
+    "libx264",
+    "-preset",
+    process.env.VERITAS_X264_PRESET || "ultrafast",
+    "-crf",
+    process.env.VERITAS_X264_CRF || "23",
+    "-pix_fmt",
+    "yuv420p",
   ];
 }
 
@@ -701,13 +872,15 @@ function onceDrain(stream: NodeJS.WritableStream): Promise<void> {
 function waitForProcess(
   child: ReturnType<typeof spawn>,
   label: string,
-  stderrChunks: Buffer[]
+  stderrChunks: Buffer[],
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code && code !== 0) {
-        const stderr = Buffer.concat(stderrChunks).toString("utf8").slice(-2000);
+        const stderr = Buffer.concat(stderrChunks)
+          .toString("utf8")
+          .slice(-2000);
         reject(new Error(`${label} exited with code ${code}.\n${stderr}`));
         return;
       }
@@ -729,7 +902,11 @@ function runCommand(command: string, args: string[]): Promise<CommandResult> {
     child.on("close", (code) => {
       const stderrText = Buffer.concat(stderr).toString("utf8");
       if (code && code !== 0) {
-        reject(new Error(`${path.basename(command)} exited with code ${code}.\n${stderrText.slice(-2000)}`));
+        reject(
+          new Error(
+            `${path.basename(command)} exited with code ${code}.\n${stderrText.slice(-2000)}`,
+          ),
+        );
         return;
       }
 
@@ -741,7 +918,7 @@ function runCommand(command: string, args: string[]): Promise<CommandResult> {
 function runProgressCommand(
   command: string,
   args: string[],
-  onProgress: ProgressReporter
+  onProgress: ProgressReporter,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -780,7 +957,11 @@ function runProgressCommand(
     child.on("close", (code) => {
       if (code && code !== 0) {
         const stderrText = Buffer.concat(stderr).toString("utf8").slice(-3000);
-        reject(new Error(`${path.basename(command)} exited with code ${code}.\n${stderrText}`));
+        reject(
+          new Error(
+            `${path.basename(command)} exited with code ${code}.\n${stderrText}`,
+          ),
+        );
         return;
       }
 
@@ -789,7 +970,10 @@ function runProgressCommand(
   });
 }
 
-function runCudaExtractionCommand(command: string, args: string[]): Promise<CudaExtractionResult> {
+function runCudaExtractionCommand(
+  command: string,
+  args: string[],
+): Promise<CudaExtractionResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args);
     const stderr: Buffer[] = [];
@@ -835,7 +1019,9 @@ function runCudaExtractionCommand(command: string, args: string[]): Promise<Cuda
     child.on("close", (code) => {
       if (stdoutRemainder.trim()) {
         try {
-          const parsed = JSON.parse(stdoutRemainder) as Partial<CudaExtractionResult>;
+          const parsed = JSON.parse(
+            stdoutRemainder,
+          ) as Partial<CudaExtractionResult>;
           if (
             typeof parsed.watermarkId === "string" &&
             typeof parsed.confidence === "number" &&
@@ -862,12 +1048,18 @@ function runCudaExtractionCommand(command: string, args: string[]): Promise<Cuda
 
       if (code && code !== 0) {
         const stderrText = Buffer.concat(stderr).toString("utf8").slice(-3000);
-        reject(new Error(`${path.basename(command)} exited with code ${code}.\n${stderrText}`));
+        reject(
+          new Error(
+            `${path.basename(command)} exited with code ${code}.\n${stderrText}`,
+          ),
+        );
         return;
       }
 
       if (!result) {
-        reject(new Error("CUDA DCT extraction did not return a watermark result."));
+        reject(
+          new Error("CUDA DCT extraction did not return a watermark result."),
+        );
         return;
       }
 
@@ -893,10 +1085,7 @@ function bitsToHex(bits: number[]): string {
 
   for (let i = 0; i < bits.length; i += 4) {
     const nibble =
-      (bits[i] << 3) |
-      (bits[i + 1] << 2) |
-      (bits[i + 2] << 1) |
-      bits[i + 3];
+      (bits[i] << 3) | (bits[i + 1] << 2) | (bits[i + 2] << 1) | bits[i + 3];
     hex += nibble.toString(16);
   }
 
@@ -940,7 +1129,12 @@ function shuffle<T>(items: T[], seed: number) {
   }
 }
 
-function embedWatermarkIntoFrame(frame: Buffer, width: number, height: number, watermarkId: string) {
+function embedWatermarkIntoFrame(
+  frame: Buffer,
+  width: number,
+  height: number,
+  watermarkId: string,
+) {
   const bits = hexToBits(watermarkId);
   const plan = createEmbeddingPlan(width, height);
 
@@ -949,15 +1143,31 @@ function embedWatermarkIntoFrame(frame: Buffer, width: number, height: number, w
   }
 }
 
-function accumulateFrameVotes(frame: Buffer, width: number, height: number, votes: number[]) {
+function accumulateFrameVotes(
+  frame: Buffer,
+  width: number,
+  height: number,
+  votes: number[],
+) {
   const plan = createEmbeddingPlan(width, height);
 
   for (const point of plan) {
-    votes[point.bitIndex] += readBitVoteFromBlock(frame, width, point.x, point.y);
+    votes[point.bitIndex] += readBitVoteFromBlock(
+      frame,
+      width,
+      point.x,
+      point.y,
+    );
   }
 }
 
-function embedBitInBlock(frame: Buffer, width: number, startX: number, startY: number, bit: number) {
+function embedBitInBlock(
+  frame: Buffer,
+  width: number,
+  startX: number,
+  startY: number,
+  bit: number,
+) {
   const originalY = readLuminanceBlock(frame, width, startX, startY);
   const coeffs = dct2d(originalY);
   const aIndex = COEFF_A[1] * 8 + COEFF_A[0];
@@ -965,7 +1175,10 @@ function embedBitInBlock(frame: Buffer, width: number, startX: number, startY: n
   const desiredDiff = bit === 1 ? DCT_STRENGTH : -DCT_STRENGTH;
   const currentDiff = coeffs[aIndex] - coeffs[bIndex];
 
-  if ((bit === 1 && currentDiff < DCT_STRENGTH) || (bit === 0 && currentDiff > -DCT_STRENGTH)) {
+  if (
+    (bit === 1 && currentDiff < DCT_STRENGTH) ||
+    (bit === 0 && currentDiff > -DCT_STRENGTH)
+  ) {
     const adjustment = (desiredDiff - currentDiff) / 2;
     coeffs[aIndex] += adjustment;
     coeffs[bIndex] -= adjustment;
@@ -975,7 +1188,12 @@ function embedBitInBlock(frame: Buffer, width: number, startX: number, startY: n
   applyLuminanceDelta(frame, width, startX, startY, originalY, updatedY);
 }
 
-function readBitVoteFromBlock(frame: Buffer, width: number, startX: number, startY: number): number {
+function readBitVoteFromBlock(
+  frame: Buffer,
+  width: number,
+  startX: number,
+  startY: number,
+): number {
   const yBlock = readLuminanceBlock(frame, width, startX, startY);
   const coeffs = dct2d(yBlock);
   const aIndex = COEFF_A[1] * 8 + COEFF_A[0];
@@ -984,7 +1202,12 @@ function readBitVoteFromBlock(frame: Buffer, width: number, startX: number, star
   return coeffs[aIndex] >= coeffs[bIndex] ? 1 : -1;
 }
 
-function readLuminanceBlock(frame: Buffer, width: number, startX: number, startY: number): number[] {
+function readLuminanceBlock(
+  frame: Buffer,
+  width: number,
+  startX: number,
+  startY: number,
+): number[] {
   const block = new Array(64).fill(0) as number[];
 
   for (let y = 0; y < 8; y += 1) {
@@ -1006,15 +1229,20 @@ function applyLuminanceDelta(
   startX: number,
   startY: number,
   originalY: number[],
-  updatedY: number[]
+  updatedY: number[],
 ) {
   const deltas = updatedY.map((value, index) => value - originalY[index]);
-  const meanDelta = deltas.reduce((sum, delta) => sum + delta, 0) / deltas.length;
+  const meanDelta =
+    deltas.reduce((sum, delta) => sum + delta, 0) / deltas.length;
 
   for (let y = 0; y < 8; y += 1) {
     for (let x = 0; x < 8; x += 1) {
       const blockIndex = y * 8 + x;
-      const delta = clamp(deltas[blockIndex] - meanDelta, -MAX_LUMA_DELTA, MAX_LUMA_DELTA);
+      const delta = clamp(
+        deltas[blockIndex] - meanDelta,
+        -MAX_LUMA_DELTA,
+        MAX_LUMA_DELTA,
+      );
       const pixelIndex = ((startY + y) * width + startX + x) * 3;
 
       frame[pixelIndex] = clampByte(frame[pixelIndex] + delta);
