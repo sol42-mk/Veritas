@@ -87,10 +87,10 @@ export default function VerifyPage() {
 
   function getOrCreateVoterId(): string {
     const key = "veritasVoterId";
-    let id = localStorage.getItem(key);
+    let id = typeof window !== "undefined" ? localStorage.getItem(key) : null;
     if (!id) {
       id = crypto.randomUUID();
-      localStorage.setItem(key, id);
+      if (typeof window !== "undefined") localStorage.setItem(key, id);
     }
     return id;
   }
@@ -322,13 +322,13 @@ export default function VerifyPage() {
     : null;
   const contextEntries = result?.contextRecord
     ? ([
-        ["Claimed location", result.contextRecord.claim.location],
-        ["Claimed event date", result.contextRecord.claim.eventDate],
-        ["Subject", result.contextRecord.claim.subject],
-        ["Description", result.contextRecord.claim.description],
-        ["Reference URL", result.contextRecord.claim.referenceUrl],
-      ] as [string, string | undefined][])
-        .filter(([, value]) => Boolean(value))
+      ["Claimed location", result.contextRecord.claim.location],
+      ["Claimed event date", result.contextRecord.claim.eventDate],
+      ["Subject", result.contextRecord.claim.subject],
+      ["Description", result.contextRecord.claim.description],
+      ["Reference URL", result.contextRecord.claim.referenceUrl],
+    ] as [string, string | undefined][])
+      .filter(([, value]) => Boolean(value))
     : [];
   const extensionNeedsManualUpload = Boolean(
     extensionSource && (
@@ -339,21 +339,21 @@ export default function VerifyPage() {
   );
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-12">
+    <main className="min-h-screen bg-transparent px-4 py-12">
       <div className="mx-auto w-full max-w-4xl space-y-6">
         <header className="space-y-2">
-          <p className="text-sm font-medium uppercase tracking-wide text-blue-700">Verification</p>
-          <h1 className="text-3xl font-semibold text-slate-950">Verify a news video</h1>
-          <p className="max-w-2xl text-sm leading-6 text-slate-600">
+          <p className="text-sm font-medium uppercase tracking-wide text-white">Verification</p>
+          <h1 className="text-3xl font-semibold text-white">Verify a news video</h1>
+          <p className="max-w-2xl text-sm leading-6 text-slate-300">
             Check whether a Veritas watermark maps to a registered Solana devnet provenance record
             and see the source trust tier for the wallet that registered it.
           </p>
         </header>
 
         {extensionSource && (
-          <section className="rounded-lg border border-blue-100 bg-white p-4">
-            <p className="text-sm font-semibold text-slate-950">Video selected from browser extension</p>
-            <div className="mt-3 space-y-2 text-xs text-slate-600">
+          <section className="panel p-4">
+            <p className="text-sm font-semibold text-white">Video selected from browser extension</p>
+            <div className="mt-3 space-y-2 text-xs text-slate-300">
               {extensionSource.pageHost && (
                 <p>
                   <span className="text-slate-400">Page</span>{" "}
@@ -368,16 +368,16 @@ export default function VerifyPage() {
               )}
             </div>
             {extensionNeedsManualUpload ? (
-              <div className="mt-3 rounded-md border border-amber-100 bg-amber-50 p-3">
-                <p className="text-sm font-medium text-amber-900">Manual upload needed</p>
-                <p className="mt-1 text-xs leading-5 text-amber-800">
+              <div className="mt-3 panel p-3">
+                <p className="text-sm font-medium text-white">Manual upload needed</p>
+                <p className="mt-1 text-xs leading-5 text-white">
                   This page does not expose a normal downloadable video file to the extension. Use
                   Facebook's own download option or another tool you are allowed to use, then upload
                   the downloaded video file here for verification.
                 </p>
               </div>
             ) : (
-              <p className="mt-3 text-xs leading-5 text-slate-500">
+              <p className="mt-3 text-xs leading-5 text-slate-400">
                 Direct URL import is not enabled yet. Upload the downloaded file here to verify it.
               </p>
             )}
@@ -392,8 +392,8 @@ export default function VerifyPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           onClick={() => document.getElementById("verify-file-input")?.click()}
-          className={`cursor-pointer rounded-lg border-2 border-dashed bg-white transition-colors ${
-            dragOver ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-slate-300"
+          className={`cursor-pointer border-2 border-dashed panel transition-colors ${
+            dragOver ? "border-white/20 bg-white/5" : "border-white/10 hover:border-white/20 hover:bg-white/5"
           } ${file ? "p-5" : "px-6 py-14"}`}
         >
           <input
@@ -409,8 +409,8 @@ export default function VerifyPage() {
 
           {file ? (
             <div className="flex items-center gap-4">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md bg-blue-50">
-                <svg className="h-5 w-5 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-white/5 border border-white/10">
+                <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -420,8 +420,8 @@ export default function VerifyPage() {
                 </svg>
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-950">{file.name}</p>
-                <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
+                <p className="truncate text-sm font-medium text-white">{file.name}</p>
+                <p className="text-xs text-slate-400">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
               </div>
               <button
                 onClick={(event) => {
@@ -429,14 +429,14 @@ export default function VerifyPage() {
                   setFile(null);
                   resetResult();
                 }}
-                className="ml-auto text-sm font-medium text-slate-500 hover:text-slate-800"
+                className="ml-auto text-sm font-medium text-slate-400 hover:text-white"
               >
                 Change
               </button>
             </div>
           ) : (
             <div className="text-center">
-              <svg className="mx-auto mb-3 h-8 w-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="mx-auto mb-3 h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -444,8 +444,8 @@ export default function VerifyPage() {
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 />
               </svg>
-              <p className="text-sm text-slate-600">
-                Drop a watermarked video here or <span className="text-blue-700">browse files</span>
+              <p className="text-sm text-slate-300">
+                Drop a watermarked video here or <span className="text-white font-bold">browse files</span>
               </p>
               <p className="mt-1 text-xs text-slate-400">MP4 files registered through Veritas work best</p>
             </div>
@@ -456,14 +456,14 @@ export default function VerifyPage() {
           <button
             onClick={handleVerifyFile}
             disabled={isWorking}
-            className="w-full rounded-md bg-blue-700 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-primary w-full py-4 text-lg"
           >
             {isWorking ? STATUS_LABELS[status] : "Verify video"}
           </button>
         )}
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
-          <label htmlFor="manual-watermark-id" className="text-sm font-semibold text-slate-950">
+        <section className="panel p-4">
+          <label htmlFor="manual-watermark-id" className="text-sm font-semibold text-white">
             Watermark ID
           </label>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row">
@@ -472,12 +472,12 @@ export default function VerifyPage() {
               value={manualWatermarkId}
               onChange={(event) => setManualWatermarkId(event.target.value)}
               placeholder="32-character watermark ID"
-              className="min-w-0 flex-1 rounded-md border border-slate-200 px-3 py-2 font-mono text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="min-w-0 flex-1 icy-input font-mono"
             />
             <button
               onClick={handleVerifyManual}
               disabled={isWorking || !manualWatermarkId.trim()}
-              className="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn-secondary px-6"
             >
               Check ID
             </button>
@@ -485,29 +485,29 @@ export default function VerifyPage() {
         </section>
 
         {status === "not-found" && (
-          <div className="space-y-3 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
-            <p className="text-sm font-medium text-amber-900">
+          <div className="space-y-3 panel p-5 border-purple-500/30">
+            <p className="text-sm font-medium text-white">
               We couldn't verify the video as being from a trusted source.
             </p>
-            <p className="text-xs leading-5 text-amber-800">
+            <p className="text-xs leading-5 text-slate-300">
               Note: This does not mean that the video is necessarily untruthful. It only means Veritas cannot
               confirm that it came from one of our trusted sources.
             </p>
             {attemptedExtraction ? (
-              <div className="rounded-md border border-amber-100 bg-white p-3 text-xs text-slate-600">
-                <p className="font-medium text-slate-950">Watermark extraction attempt</p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-4">
+              <div className="panel p-3 text-xs text-slate-300 bg-black/40">
+                <p className="font-medium text-white mb-2 border-b border-white/5 pb-1">Watermark extraction attempt</p>
+                <div className="grid gap-2 sm:grid-cols-4">
                   <div>
                     <span className="block text-slate-400">Method</span>
-                    <span className="font-mono">{attemptedExtraction.extraction?.method ?? "manual"}</span>
+                    <span className="font-mono text-white">{attemptedExtraction.extraction?.method ?? "manual"}</span>
                   </div>
                   <div>
                     <span className="block text-slate-400">Recovered ID</span>
-                    <span className="break-all font-mono">{attemptedExtraction.watermarkId}</span>
+                    <span className="break-all font-mono text-white">{attemptedExtraction.watermarkId}</span>
                   </div>
                   <div>
                     <span className="block text-slate-400">Confidence</span>
-                    <span className="font-mono">
+                    <span className="font-mono text-white">
                       {typeof attemptedExtraction.extraction?.confidence === "number"
                         ? `${(attemptedExtraction.extraction.confidence * 100).toFixed(1)}%`
                         : "not available"}
@@ -515,18 +515,18 @@ export default function VerifyPage() {
                   </div>
                   <div>
                     <span className="block text-slate-400">Frames</span>
-                    <span className="font-mono">
+                    <span className="font-mono text-white">
                       {attemptedExtraction.extraction?.framesAnalyzed ?? "not sampled"}
                     </span>
                   </div>
                 </div>
                 {attemptedExtraction.extraction?.rejectionReason && (
-                  <p className="mt-2 text-xs leading-5 text-amber-800">
+                  <p className="mt-2 text-xs leading-5 text-purple-300">
                     {attemptedExtraction.extraction.rejectionReason}
                   </p>
                 )}
                 {attemptedExtraction.extraction?.candidatesTested && (
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                  <p className="mt-1 text-xs leading-5 text-slate-400 italic">
                     Tested {attemptedExtraction.extraction.candidatesTested} DCT extraction candidates
                     {attemptedExtraction.extraction.extractionWidth
                       ? `; best candidate used ${attemptedExtraction.extraction.extractionWidth}x${attemptedExtraction.extraction.extractionHeight}.`
@@ -535,7 +535,7 @@ export default function VerifyPage() {
                 )}
               </div>
             ) : (
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-slate-400 italic">
                 No metadata or DCT watermark ID could be extracted from this file.
               </p>
             )}
@@ -543,25 +543,25 @@ export default function VerifyPage() {
         )}
 
         {status === "mismatch" && result && (
-          <div className="space-y-3 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
-            <p className="text-sm font-medium text-amber-900">
+          <div className="space-y-3 panel p-5 border-red-500/30">
+            <p className="text-sm font-medium text-white">
               We couldn't verify the video as matching the registered Veritas record.
             </p>
-            <p className="text-xs leading-5 text-amber-800">
+            <p className="text-xs leading-5 text-slate-300">
               Note: This does not mean that the video is necessarily untruthful. It means the
               watermark ID was found, but the uploaded video did not match the registered content
               fingerprint closely enough.
             </p>
-            <div className="rounded-md border border-amber-100 bg-white p-3 text-xs text-slate-600">
-              <p className="font-medium text-slate-950">Fingerprint check</p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <div className="panel p-3 text-xs text-slate-300 bg-black/40">
+              <p className="font-medium text-white mb-2 border-b border-white/5 pb-1">Fingerprint check</p>
+              <div className="grid gap-2 sm:grid-cols-3">
                 <div>
                   <span className="block text-slate-400">Algorithm</span>
-                  <span className="font-mono">{result.fingerprintCheck?.algorithm ?? "unknown"}</span>
+                  <span className="font-mono text-white">{result.fingerprintCheck?.algorithm ?? "unknown"}</span>
                 </div>
                 <div>
                   <span className="block text-slate-400">Distance</span>
-                  <span className="font-mono">
+                  <span className="font-mono text-white">
                     {typeof result.fingerprintCheck?.distance === "number"
                       ? result.fingerprintCheck.distance
                       : "not available"}
@@ -569,10 +569,10 @@ export default function VerifyPage() {
                 </div>
                 <div>
                   <span className="block text-slate-400">Threshold</span>
-                  <span className="font-mono">{result.fingerprintCheck?.threshold ?? "not available"}</span>
+                  <span className="font-mono text-white">{result.fingerprintCheck?.threshold ?? "not available"}</span>
                 </div>
               </div>
-              <p className="mt-2 text-xs leading-5 text-amber-800">
+              <p className="mt-2 text-xs leading-5 text-red-300">
                 {result.fingerprintCheck?.message}
               </p>
             </div>
@@ -580,76 +580,69 @@ export default function VerifyPage() {
         )}
 
         {error && (
-          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3">
-            <p className="whitespace-pre-wrap text-sm text-red-700">{error}</p>
+          <div className="panel p-4 border-purple-500/30">
+            <p className="whitespace-pre-wrap text-sm text-white">{error}</p>
           </div>
         )}
 
         {status === "verified" && result && (
-          <section className="space-y-4 rounded-lg border border-emerald-100 bg-emerald-50 p-5">
+          <section className="space-y-4 panel p-6">
             <div className="flex items-center gap-2">
-              <svg className="h-5 w-5 flex-shrink-0 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <span className="text-sm font-medium text-emerald-900">Verified Veritas record</span>
+              <div className="h-2 w-2 rounded-full bg-purple-400 animate-pulse" />
+              <span className="text-sm font-bold text-white uppercase tracking-wider">Verified Veritas record</span>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="panel p-4 bg-white/5">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>
-                <p className="mt-2 text-lg font-semibold text-slate-950">{result.record.sourceName}</p>
+                <p className="mt-2 text-lg font-bold text-white">{result.record.sourceName}</p>
                 <p className="mt-1 font-mono text-xs text-slate-500">source_id: {result.record.sourceId}</p>
               </div>
 
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
+              <div className="panel p-4 bg-white/5">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Trust tier</p>
-                <p className="mt-2 text-sm font-semibold text-slate-950">
+                <p className="mt-2 text-sm font-bold text-white">
                   {verifiedSourceProfile?.trust.tierName}
                 </p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
+                <p className="mt-1 text-xs leading-5 text-slate-400">
                   {verifiedSourceProfile?.trust.description}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 rounded-md border border-emerald-100 bg-white p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 w-40 flex-shrink-0">
+            <div className="flex flex-col sm:flex-row items-center gap-4 panel p-4 bg-purple-500/5">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400 w-40 flex-shrink-0">
                 Source credibility
               </p>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => result && handleVote(result.record.sourceId, 1)}
-                  className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
                     votes?.userVote === 1
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      ? "border-purple-400 bg-purple-500/20 text-white shadow-[0_0_15px_rgba(168,85,247,0.3)]"
+                      : "border-white/10 bg-black/40 text-slate-400 hover:border-white/20 hover:text-white"
                   }`}
                 >
                   👍 {votes ? votes.likes : "—"}
                 </button>
                 <button
                   onClick={() => result && handleVote(result.record.sourceId, -1)}
-                  className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-all ${
                     votes?.userVote === -1
-                      ? "border-red-300 bg-red-50 text-red-700"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      ? "border-red-400 bg-red-500/20 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]"
+                      : "border-white/10 bg-black/40 text-slate-400 hover:border-white/20 hover:text-white"
                   }`}
                 >
                   👎 {votes ? votes.dislikes : "—"}
                 </button>
-                <span className="text-xs text-slate-400">Was this source accurate?</span>
+                <span className="text-xs text-slate-500 ml-2">Was this source accurate?</span>
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="panel p-4 bg-white/5">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Registered</p>
-                <p className="mt-2 text-sm font-semibold text-slate-950">
+                <p className="mt-2 text-sm font-bold text-white">
                   {formatTimestamp(result.record.timestamp)}
                 </p>
                 <p className="mt-1 font-mono text-xs text-slate-500 break-all">
@@ -657,9 +650,9 @@ export default function VerifyPage() {
                 </p>
               </div>
 
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
+              <div className="panel p-4 bg-white/5">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Verification meaning</p>
-                <p className="mt-2 text-xs leading-5 text-slate-600">
+                <p className="mt-2 text-xs leading-5 text-slate-400">
                   This confirms a Veritas record exists for the recovered watermark. It does not
                   independently prove that every claim about the video is true.
                 </p>
@@ -667,41 +660,43 @@ export default function VerifyPage() {
             </div>
 
             {result.extraction && (
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Watermark detection</p>
-                <p className="mt-2 text-sm font-semibold text-slate-950">
+              <div className="panel p-4 bg-white/5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Watermark detection</p>
+                  <button
+                    onClick={() => setShowDebug((v) => !v)}
+                    className="text-xs font-bold text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    {showDebug ? "Hide details" : "Show details"}
+                  </button>
+                </div>
+                <p className="mt-2 text-sm font-bold text-white">
                   {result.extraction.method === "metadata"
                     ? "MP4 metadata watermark"
                     : "DCT spread-spectrum visual watermark"}
                 </p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
+                <p className="mt-1 text-xs leading-5 text-slate-400">
                   {result.extraction.method === "metadata"
                     ? "Metadata was found, so DCT fallback was not needed for this file."
                     : "Metadata was missing or unreadable, so verification used the visual DCT watermark."}
                 </p>
-                <button
-                  onClick={() => setShowDebug((v) => !v)}
-                  className="mt-3 text-xs font-medium text-slate-400 hover:text-slate-600"
-                >
-                  {showDebug ? "Hide debug info ▴" : "Debug info ▾"}
-                </button>
                 {showDebug && (
-                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                  <div className="mt-4 pt-4 border-t border-white/5 grid gap-4 text-xs text-slate-300 sm:grid-cols-3">
                     <div>
-                      <span className="block text-slate-400">Method</span>
-                      <span className="font-mono">{result.extraction.method}</span>
+                      <span className="block text-slate-500 mb-1">Method</span>
+                      <span className="font-mono text-white">{result.extraction.method}</span>
                     </div>
                     <div>
-                      <span className="block text-slate-400">Confidence</span>
-                      <span className="font-mono">
+                      <span className="block text-slate-500 mb-1">Confidence</span>
+                      <span className="font-mono text-white">
                         {typeof result.extraction.confidence === "number"
                           ? `${(result.extraction.confidence * 100).toFixed(1)}%`
                           : "not needed"}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-slate-400">Frames</span>
-                      <span className="font-mono">
+                      <span className="block text-slate-500 mb-1">Frames</span>
+                      <span className="font-mono text-white">
                         {result.extraction.framesAnalyzed ?? "not sampled"}
                       </span>
                     </div>
@@ -710,47 +705,47 @@ export default function VerifyPage() {
               </div>
             )}
 
-            <div className="rounded-md border border-emerald-100 bg-white p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Context claims</p>
+            <div className="panel p-4 bg-white/5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-4">Context claims</p>
               {result.contextRecord && contextEntries.length > 0 ? (
-                <div className="mt-3 space-y-2 text-xs">
+                <div className="space-y-3">
                   {contextEntries.map(([label, value]) => (
-                    <div key={label} className="grid gap-1 sm:grid-cols-[10rem_1fr]">
-                      <span className="text-slate-400">{label}</span>
+                    <div key={label} className="grid gap-2 sm:grid-cols-[10rem_1fr] items-start">
+                      <span className="text-xs text-slate-500">{label}</span>
                       {label === "Reference URL" && value ? (
                         <a
                           href={value}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="break-all text-blue-700 hover:text-blue-800"
+                          className="break-all text-xs text-purple-400 hover:text-purple-300 underline font-mono"
                         >
                           {value}
                         </a>
                       ) : (
-                        <span className="break-words text-slate-900">{value}</span>
+                        <span className="text-sm text-white leading-relaxed">{value}</span>
                       )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 text-xs leading-5 text-slate-500">
+                <p className="text-xs italic text-slate-500">
                   No extra context claims were saved for this record.
                 </p>
               )}
               {result.contextRecord?.contextHash && (
-                <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs">
-                  <div className="grid gap-1 sm:grid-cols-[10rem_1fr]">
-                    <span className="text-slate-400">Context hash</span>
-                    <span className="break-all font-mono text-slate-900">{result.contextRecord.contextHash}</span>
+                <div className="mt-6 pt-4 border-t border-white/5 space-y-2 text-[10px]">
+                  <div className="grid gap-1 sm:grid-cols-[10rem_1fr] items-center">
+                    <span className="text-slate-500 uppercase tracking-tighter font-bold">Context hash</span>
+                    <span className="break-all font-mono text-slate-400 bg-black/40 px-2 py-1 rounded">{result.contextRecord.contextHash}</span>
                   </div>
                   {result.contextRecord.contextMemoSignature && (
-                    <div className="grid gap-1 sm:grid-cols-[10rem_1fr]">
-                      <span className="text-slate-400">Solana memo</span>
+                    <div className="grid gap-1 sm:grid-cols-[10rem_1fr] items-center">
+                      <span className="text-slate-500 uppercase tracking-tighter font-bold">Solana memo</span>
                       <a
                         href={`https://explorer.solana.com/tx/${result.contextRecord.contextMemoSignature}?cluster=devnet`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="break-all font-mono text-blue-700 hover:text-blue-800"
+                        className="break-all font-mono text-purple-400/70 hover:text-purple-300 bg-black/40 px-2 py-1 rounded transition-colors"
                       >
                         {result.contextRecord.contextMemoSignature}
                       </a>
@@ -761,41 +756,42 @@ export default function VerifyPage() {
             </div>
 
             {result.contextRecord && (
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Chain of custody</p>
-                  <span className="text-xs text-slate-500">
+              <div className="panel p-4 bg-white/5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4 pb-2 border-b border-white/5">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Chain of custody</p>
+                  <span className="text-xs font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded-full">
                     {result.contextRecord.citations.length} citation{result.contextRecord.citations.length === 1 ? "" : "s"}
                   </span>
                 </div>
                 {result.contextRecord.citations.length > 0 && (
-                  <div className="mt-3 space-y-2">
+                  <div className="space-y-3 mb-6">
                     {result.contextRecord.citations.map((citation) => (
-                      <div key={citation.id} className="rounded-md bg-slate-50 p-3 text-xs">
-                        <div className="flex flex-wrap gap-2 text-slate-500">
-                          <span className="font-medium text-slate-700">{citation.citedBySourceName}</span>
-                          <span>{new Date(citation.createdAt).toLocaleString("en-US")}</span>
+                      <div key={citation.id} className="panel p-3 bg-black/20 text-xs">
+                        <div className="flex flex-wrap gap-2 justify-between mb-1">
+                          <span className="font-bold text-white">{citation.citedBySourceName}</span>
+                          <span className="text-slate-500">{new Date(citation.createdAt).toLocaleString("en-US")}</span>
                         </div>
-                        <p className="mt-1 break-all font-mono text-slate-500">{citation.citedBy}</p>
-                        {citation.note && <p className="mt-1 text-slate-700">{citation.note}</p>}
+                        <p className="font-mono text-slate-400 opacity-50 text-[10px] truncate mb-2">{citation.citedBy}</p>
+                        {citation.note && <p className="text-slate-300 italic border-l-2 border-purple-500/30 pl-3 py-1">{citation.note}</p>}
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="mt-3 grid gap-3">
+                <div className="grid gap-3">
                   {!citationWallet ? (
                     <button
                       onClick={handleConnectCitationWallet}
-                      className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                      className="btn-secondary py-2"
                     >
                       Connect wallet to cite
                     </button>
                   ) : (
-                    <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
-                      <span className="font-medium text-slate-900">
+                    <div className="panel p-3 bg-purple-500/5 text-xs">
+                      <p className="text-slate-500 mb-1">Authenticated newsroom:</p>
+                      <span className="font-bold text-white block">
                         {citationSourceProfile?.trust.tierName}
                       </span>
-                      <p className="mt-1 break-all font-mono">{citationWallet}</p>
+                      <p className="mt-1 break-all font-mono text-slate-500 opacity-50">{citationWallet}</p>
                     </div>
                   )}
                   <textarea
@@ -803,48 +799,48 @@ export default function VerifyPage() {
                     onChange={(event) => setCitationNote(event.target.value)}
                     rows={2}
                     placeholder="Optional citation note from a verified newsroom."
-                    className="resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="resize-none icy-input text-xs"
                   />
                   <button
                     onClick={handleSubmitCitation}
                     disabled={!citationWallet || citationSourceProfile?.trust.tier !== 1}
-                    className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="btn-primary py-2 text-xs"
                   >
                     Add chain-of-custody citation
                   </button>
                   {citationMessage && (
-                    <p className="text-xs text-slate-500">{citationMessage}</p>
+                    <p className="text-xs text-slate-500 italic text-center">{citationMessage}</p>
                   )}
                 </div>
               </div>
             )}
 
             {result.contextRecord && (
-              <div className="rounded-md border border-emerald-100 bg-white p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Flags</p>
-                  <span className="text-xs text-slate-500">
+              <div className="panel p-4 bg-white/5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4 pb-2 border-b border-white/5">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Context Flags</p>
+                  <span className="text-xs font-bold text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full">
                     {result.contextRecord.flags.length} saved
                   </span>
                 </div>
                 {result.contextRecord.flags.length > 0 && (
-                  <div className="mt-3 space-y-2">
+                  <div className="space-y-3 mb-6">
                     {result.contextRecord.flags.map((flag) => (
-                      <div key={flag.id} className="rounded-md bg-slate-50 p-3 text-xs">
-                        <div className="flex flex-wrap gap-2 text-slate-500">
-                          <span className="font-medium text-slate-700">{flag.reason}</span>
-                          <span>{new Date(flag.createdAt).toLocaleString("en-US")}</span>
+                      <div key={flag.id} className="panel p-3 bg-red-500/5 text-xs">
+                        <div className="flex flex-wrap gap-2 justify-between mb-1">
+                          <span className="font-bold text-red-300">{flag.reason}</span>
+                          <span className="text-slate-500">{new Date(flag.createdAt).toLocaleString("en-US")}</span>
                         </div>
-                        <p className="mt-1 text-slate-700">{flag.details}</p>
+                        <p className="text-slate-300 leading-relaxed">{flag.details}</p>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="mt-3 grid gap-3">
+                <div className="grid gap-3">
                   <select
                     value={flagReason}
                     onChange={(event) => setFlagReason(event.target.value as ContextFlagReason)}
-                    className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="icy-input text-xs appearance-none"
                   >
                     <option value="location">Claimed location does not match</option>
                     <option value="date">Claimed date does not match</option>
@@ -857,23 +853,24 @@ export default function VerifyPage() {
                     onChange={(event) => setFlagDetails(event.target.value)}
                     rows={3}
                     placeholder="Describe the issue with the claimed context."
-                    className="resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="resize-none icy-input text-xs"
                   />
                   <button
                     onClick={handleSubmitFlag}
                     disabled={!flagDetails.trim()}
-                    className="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="btn-secondary py-2 text-xs border-red-500/20 text-red-300 hover:bg-red-500/10"
                   >
                     Submit flag
                   </button>
                   {flagMessage && (
-                    <p className="text-xs text-slate-500">{flagMessage}</p>
+                    <p className="text-xs text-slate-500 italic text-center">{flagMessage}</p>
                   )}
                 </div>
               </div>
             )}
 
-            <div className="space-y-2 rounded-md border border-emerald-100 bg-white p-3 text-xs">
+            <div className="panel p-4 bg-black/40 space-y-3 text-[10px]">
+              <p className="text-slate-500 uppercase tracking-widest font-bold mb-2">Technical Registry Data</p>
               {([
                 ["Watermark ID", result.watermarkId],
                 ["Registered content fingerprint", result.record.videoHash],
@@ -883,9 +880,9 @@ export default function VerifyPage() {
                   : []),
                 ...(result.uploadedHash ? [["Uploaded file SHA-256", result.uploadedHash] as [string, string]] : []),
               ] as [string, string][]).map(([label, value]) => (
-                <div key={label} className="flex gap-2">
-                  <span className="w-40 flex-shrink-0 text-slate-400">{label}</span>
-                  <span className="break-all font-mono text-slate-900">{value}</span>
+                <div key={label} className="grid gap-2 sm:grid-cols-[12rem_1fr]">
+                  <span className="text-slate-600 font-medium">{label}</span>
+                  <span className="break-all font-mono text-slate-400 opacity-80">{value}</span>
                 </div>
               ))}
             </div>
