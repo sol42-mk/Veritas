@@ -42,6 +42,18 @@ export default function HomePage() {
               >
                 Verify footage
               </a>
+              <a
+                href="/my-videos"
+                className="rounded-md border border-slate-300 bg-white px-5 py-3 text-center text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50"
+              >
+                My videos
+              </a>
+              <a
+                href="/mock-social"
+                className="rounded-md border border-slate-300 bg-white px-5 py-3 text-center text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50"
+              >
+                Mock social
+              </a>
             </div>
           </div>
 

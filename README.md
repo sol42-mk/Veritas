@@ -6,6 +6,16 @@ Veritas lets a journalist upload a video, have the backend compute a SHA-256 has
 
 The stable MVP uses MP4 metadata. The `robust-watermarking` branch also adds an experimental backend DCT spread-spectrum visual watermark that is embedded into video frames. This should be tested against real platform re-encoding before it is treated as production-grade.
 
+On the `shenol-work` branch, new registrations can store a VideoHash perceptual fingerprint in the existing Solana `video_hash` field as `videohash:<16 hex chars>`. If the optional VideoHash worker is not installed, the app falls back to the legacy SHA-256 value.
+
+This branch also adds context-linked registration. Uploaders can attach claimed location, event date, subject, description, and reference URL. These context records and user flags are stored in Supabase when configured, with `.veritas-data/context-records.json` as a local fallback.
+
+Registered uploaders can open `/my-videos`, connect the same wallet, see records saved for that wallet, and add or update the original/public video URL after registration.
+
+For a less technical explanation of what the project does and why it exists, read [PROJECT_DETAILS.md](PROJECT_DETAILS.md).
+
+For the decentralization plan, trust tiers, VideoHash direction, context-linked registration, and browser extension roadmap, read [DECENTRALIZED_ROADMAP.md](DECENTRALIZED_ROADMAP.md).
+
 ## Current Environment
 
 This checkout is already in Ubuntu/WSL:
@@ -75,6 +85,39 @@ http://localhost:3000/register
 
 Make sure Phantom is installed in the Windows browser, connected to devnet, and funded with devnet SOL.
 
+## Supabase Context Store
+
+Context claims and flags use Supabase when these environment variables are set:
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+```
+
+Create the required tables by opening the Supabase SQL editor and running:
+
+```text
+supabase/schema.sql
+```
+
+If the Supabase variables are not set, the app falls back to local `.veritas-data/context-records.json` storage.
+
+Off-chain database writes require Phantom message signatures:
+
+- Saving context after registration signs a `save-context` message.
+- Updating a saved context record signs an `update-context` message.
+- Adding a chain-of-custody citation signs a `cite-context` message.
+
+These signatures prove the request came from the relevant wallet without requiring Supabase Auth.
+
+Context packages are also anchored on Solana with the Memo program. The app hashes the context package and sends a memo transaction:
+
+```text
+veritas_context:<watermark_id>:<context_hash>
+```
+
+Supabase stores the context data, the context hash, and the memo transaction signature. Solana provides the tamper-evident timestamped commitment.
+
 ## Source Registry
 
 Uploaders do not choose their own source in the UI. The app derives the source profile from the connected Phantom wallet.
@@ -85,14 +128,20 @@ For the hackathon, wallet-to-source assignments live in:
 lib/sourceRegistry.ts
 ```
 
-Unknown wallets currently default to:
+Known newsroom wallets can be hardcoded as Tier 1 verified newsrooms. Unknown wallets currently default to Tier 2 registered independent sources:
 
 ```text
 source_id: independent
-source_name: Independent Journalist
+source_name: Registered Independent
 ```
 
 When you know a journalist or newsroom wallet address, add it to `SOURCE_PROFILES_BY_WALLET`. Supabase is a good next step if these assignments need to be edited from an admin UI instead of code.
+
+Trust tiers currently mean:
+
+- Tier 1 - Verified Newsroom: hardcoded wallet verified by the Veritas team.
+- Tier 2 - Registered Independent: any wallet can register, but it is shown as not team-verified.
+- Tier 3 - Chain of Custody: planned v2 flow for videos registered by independents and later cited by a verified newsroom.
 
 ## Solana Program
 
@@ -121,6 +170,14 @@ For machine-readable output:
 npm run records -- --json
 ```
 
+The existing on-chain field is still named `video_hash`. New records may contain either:
+
+```text
+videohash:<16 hex chars>
+```
+
+or the legacy 64-character SHA-256 value.
+
 If you regenerate the program keypair or deploy under a different program ID, update:
 
 - `Anchor.toml`
@@ -136,14 +193,25 @@ Then rebuild and restart the app.
 app/page.tsx               Home page
 app/register/page.tsx      Journalist upload and register UI
 app/verify/page.tsx        Watermark extraction and Solana record lookup UI
+app/my-videos/page.tsx     Wallet-scoped registered video list and URL editor
+app/mock-social/page.tsx   Demo social feed with three video post scenarios
+app/api/context-records/   Context claim, flag, and citation API
 app/layout.tsx             App shell and navigation
+extension/firefox/         Firefox extension prototype
 lib/solana.ts              Phantom transaction helpers and PDA lookup
+lib/contextStore.ts        Supabase context claim and flag store with local fallback
+lib/contextTypes.ts        Shared context claim and flag types
+lib/walletAuth.ts          Shared wallet authorization message builder
+lib/walletAuthServer.ts    Server-side Phantom message signature verification
 lib/sourceRegistry.ts      Wallet-to-source assignment registry
+lib/contentFingerprint.ts  Content fingerprint parsing and VideoHash comparison helpers
 lib/serverDctWatermark.ts  Backend ffmpeg and DCT spread-spectrum video worker
+lib/serverVideoHash.ts     Optional backend VideoHash worker bridge
 lib/watermarkJobs.ts       In-memory backend watermark job progress tracker
 lib/veritas.ts             Frontend API helpers and record decoding helpers
 scripts/list-veritas-records.js Utility for listing devnet VideoRecord accounts
 workers/cuda-dct/          Optional CuPy/CUDA DCT worker for local GPU acceleration
+workers/videohash/         Optional Python VideoHash perceptual fingerprint worker
 programs/veritas/src/lib.rs Anchor smart contract
 Anchor.toml                Anchor workspace config
 .env.example               Optional environment variables
@@ -166,10 +234,22 @@ Done:
 - English home and register UI
 - Home page at `/`
 - Verification page at `/verify`
+- Mock social demo page at `/mock-social`
 - Register page UI
 - Phantom wallet connection
 - Wallet-derived source assignment for registration
+- Source trust tiers in the register and verify UI
 - Backend SHA-256 hashing of uploaded videos
+- Optional VideoHash perceptual fingerprinting for new registrations
+- Optional context claims saved after registration
+- Wallet-scoped "My Videos" page for updating the original/public URL after registration
+- Viewer flags for context mismatches
+- Chain-of-custody citation prototype for Tier 1 wallets citing registered records
+- Phantom message signatures for off-chain database writes
+- Solana Memo anchoring for context package hashes
+- Firefox extension popup that tries to verify the selected page video directly
+- Video overlay "Verify with Veritas" button opens the extension popup instead of the full verify page
+- Mock social feed with verified original, unverified post, and captioned excerpt scenarios
 - Metadata-based watermarking through the backend ffmpeg worker
 - Experimental DCT spread-spectrum frame watermarking on the `robust-watermarking` branch
 - Verification tries MP4 metadata first, then falls back to DCT visual watermark extraction

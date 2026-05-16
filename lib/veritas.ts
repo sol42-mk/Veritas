@@ -3,6 +3,7 @@
 // No React, no side effects; easy to test in isolation.
 
 import { Connection, PublicKey, clusterApiUrl } from "@solana/web3.js";
+import { isValidContentFingerprint } from "@/lib/contentFingerprint";
 
 // ─── 2. Watermarking ───────────────────────────────────────────────────────
 
@@ -19,6 +20,9 @@ interface WatermarkJobSnapshot extends WatermarkJobProgress {
   status: "queued" | "running" | "completed" | "failed";
   watermarkId?: string;
   videoHash?: string;
+  sha256Hash?: string;
+  perceptualHash?: string;
+  fingerprintAlgorithm?: "videohash" | "sha256";
   method?: "metadata+dct-spread-spectrum" | "metadata-only";
   warning?: string;
   error?: string;
@@ -97,15 +101,15 @@ export async function embedWatermark(
   }
 
   const watermarkId = downloadResponse.headers.get("X-Veritas-Watermark-Id") ?? job.watermarkId;
-  const videoHash = downloadResponse.headers.get("X-Veritas-Original-Sha256") ?? job.videoHash;
+  const videoHash = downloadResponse.headers.get("X-Veritas-Content-Fingerprint") ?? job.videoHash;
   const watermarkedBlob = await downloadResponse.blob();
 
   if (!watermarkId || !/^[a-f0-9]{32}$/i.test(watermarkId)) {
     throw new Error("The backend worker did not return a valid watermark ID.");
   }
 
-  if (!videoHash || !/^[a-f0-9]{64}$/i.test(videoHash)) {
-    throw new Error("The backend worker did not return a valid video hash.");
+  if (!videoHash || !isValidContentFingerprint(videoHash)) {
+    throw new Error("The backend worker did not return a valid content fingerprint.");
   }
 
   if (watermarkedBlob.size === 0) {
@@ -130,6 +134,9 @@ export interface ExtractedWatermark {
   watermarkId: string;
   method: "metadata" | "dct-spread-spectrum";
   uploadedHash: string;
+  uploadedFingerprint?: string;
+  uploadedPerceptualHash?: string;
+  uploadedFingerprintAlgorithm?: "videohash" | "sha256";
   trusted: boolean;
   rejectionReason?: string;
   confidence?: number;

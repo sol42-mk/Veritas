@@ -21,6 +21,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/verify" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
             Verify
           </a>
+          <a href="/my-videos" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+            My Videos
+          </a>
+          <a href="/mock-social" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">
+            Mock Social
+          </a>
         </nav>
         {children}
       </body>

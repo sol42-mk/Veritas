@@ -20,8 +20,11 @@ export async function POST(request: Request) {
         "Content-Type": "video/mp4",
         "Content-Disposition": `attachment; filename="veritas_${file.name.replace(/"/g, "")}.mp4"`,
         "X-Veritas-Watermark-Id": result.watermarkId,
-        "X-Veritas-Original-Sha256": result.videoHash,
+        "X-Veritas-Content-Fingerprint": result.videoHash,
+        "X-Veritas-Fingerprint-Algorithm": result.fingerprintAlgorithm,
+        "X-Veritas-Original-Sha256": result.sha256Hash,
         "X-Veritas-Watermark-Method": result.robust ? "metadata+dct-spread-spectrum" : "metadata-only",
+        ...(result.perceptualHash ? { "X-Veritas-VideoHash": result.perceptualHash } : {}),
         ...(result.warning ? { "X-Veritas-Warning": result.warning.slice(0, 500) } : {}),
       },
     });

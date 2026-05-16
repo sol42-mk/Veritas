@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
+import { computeServerVideoHash } from "@/lib/serverVideoHash";
 
 const TARGET_WIDTH = 640;
 const DEFAULT_MAX_OUTPUT_FPS = 30;
@@ -47,6 +48,9 @@ interface EmbeddingPoint {
 export interface ServerWatermarkResult {
   watermarkId: string;
   videoHash: string;
+  sha256Hash: string;
+  perceptualHash?: string;
+  fingerprintAlgorithm: "videohash" | "sha256";
   video: Buffer;
   robust: boolean;
   warning?: string;
@@ -56,6 +60,9 @@ export interface ServerWatermarkDetection {
   watermarkId: string;
   method: "metadata" | "dct-spread-spectrum";
   uploadedHash: string;
+  uploadedFingerprint?: string;
+  uploadedPerceptualHash?: string;
+  uploadedFingerprintAlgorithm?: "videohash" | "sha256";
   trusted: boolean;
   rejectionReason?: string;
   confidence?: number;
@@ -109,8 +116,9 @@ export async function embedServerWatermark(
       message: "Computing SHA-256 hash on the backend...",
       progress: 0.06,
     });
-    const videoHash = sha256(input);
+    const sha256Hash = sha256(input);
     await writeFile(inputPath, input);
+    const fingerprint = await computeContentFingerprint(inputPath, sha256Hash, emit);
 
     try {
       await embedDctWatermark(inputPath, robustOutputPath, watermarkId, emit);
@@ -119,7 +127,16 @@ export async function embedServerWatermark(
       if (video.length === 0)
         throw new Error("DCT worker produced an empty video.");
       emit({ message: "Watermarked MP4 is ready.", progress: 1 });
-      return { watermarkId, videoHash, video, robust: true };
+      return {
+        watermarkId,
+        videoHash: fingerprint.storageValue,
+        sha256Hash,
+        perceptualHash: fingerprint.perceptualHash,
+        fingerprintAlgorithm: fingerprint.algorithm,
+        video,
+        robust: true,
+        warning: fingerprint.warning,
+      };
     } catch (error) {
       const warning = error instanceof Error ? error.message : String(error);
       emit({
@@ -132,7 +149,16 @@ export async function embedServerWatermark(
       if (video.length === 0)
         throw new Error("Metadata fallback produced an empty video.");
       emit({ message: "Metadata-only MP4 is ready.", progress: 1 });
-      return { watermarkId, videoHash, video, robust: false, warning };
+      return {
+        watermarkId,
+        videoHash: fingerprint.storageValue,
+        sha256Hash,
+        perceptualHash: fingerprint.perceptualHash,
+        fingerprintAlgorithm: fingerprint.algorithm,
+        video,
+        robust: false,
+        warning: combineWarnings(fingerprint.warning, warning),
+      };
     }
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -149,6 +175,7 @@ export async function extractServerWatermark(
     const input = Buffer.from(await file.arrayBuffer());
     const uploadedHash = sha256(input);
     await writeFile(inputPath, input);
+    const fingerprint = await computeContentFingerprint(inputPath, uploadedHash);
 
     const metadataWatermarkId = await extractMetadataWatermark(inputPath);
     if (metadataWatermarkId) {
@@ -156,12 +183,23 @@ export async function extractServerWatermark(
         watermarkId: metadataWatermarkId,
         method: "metadata",
         uploadedHash,
+        uploadedFingerprint: fingerprint.storageValue,
+        uploadedPerceptualHash: fingerprint.perceptualHash,
+        uploadedFingerprintAlgorithm: fingerprint.algorithm,
         trusted: true,
       };
     }
 
     const detection = await extractDctWatermark(inputPath);
-    return detection ? { ...detection, uploadedHash } : null;
+    return detection
+      ? {
+          ...detection,
+          uploadedHash,
+          uploadedFingerprint: fingerprint.storageValue,
+          uploadedPerceptualHash: fingerprint.perceptualHash,
+          uploadedFingerprintAlgorithm: fingerprint.algorithm,
+        }
+      : null;
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -169,6 +207,43 @@ export async function extractServerWatermark(
 
 function sha256(input: Buffer): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+async function computeContentFingerprint(
+  inputPath: string,
+  sha256Hash: string,
+  onProgress?: ProgressReporter,
+): Promise<{
+  storageValue: string;
+  algorithm: "videohash" | "sha256";
+  perceptualHash?: string;
+  warning?: string;
+}> {
+  try {
+    onProgress?.({ message: "Computing VideoHash perceptual fingerprint...", progress: 0.075 });
+    const result = await computeServerVideoHash(inputPath);
+    return {
+      storageValue: result.storageValue,
+      algorithm: "videohash",
+      perceptualHash: result.hashHex,
+    };
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : String(error);
+    onProgress?.({
+      message: "VideoHash unavailable; using legacy SHA-256 fingerprint...",
+      progress: 0.08,
+    });
+    return {
+      storageValue: sha256Hash,
+      algorithm: "sha256",
+      warning,
+    };
+  }
+}
+
+function combineWarnings(...warnings: Array<string | undefined>): string | undefined {
+  const filtered = warnings.filter((warning): warning is string => Boolean(warning));
+  return filtered.length ? filtered.join(" ") : undefined;
 }
 
 async function makeWorkDir(): Promise<string> {

@@ -6,10 +6,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { embedWatermark, type WatermarkJobProgress } from "@/lib/veritas";
 import { getSourceProfileForWallet } from "@/lib/sourceRegistry";
+import type { ContextClaim } from "@/lib/contextTypes";
+import { createBrowserContextHash } from "@/lib/contextCommitment";
 import {
   buildRegisterTx,
   connectPhantom,
   getConnectedWallet,
+  sendContextMemo,
+  signWalletAuth,
   signAndSendTx,
 } from "@/lib/solana";
 
@@ -22,6 +26,9 @@ interface Result {
   explorerUrl: string;
   downloadUrl: string;
   registeredAt: string;
+  contextHash?: string;
+  contextMemoSignature?: string;
+  contextWarning?: string;
 }
 
 const STEP_LABELS: Record<Step, string> = {
@@ -46,6 +53,13 @@ export default function RegisterPage() {
   const [watermarkProgress, setWatermarkProgress] = useState<WatermarkJobProgress | null>(null);
   const [watermarkStartedAt, setWatermarkStartedAt] = useState<number | null>(null);
   const [watermarkElapsedMs, setWatermarkElapsedMs] = useState(0);
+  const [contextClaim, setContextClaim] = useState<ContextClaim>({
+    location: "",
+    eventDate: "",
+    subject: "",
+    description: "",
+    referenceUrl: "",
+  });
 
   const sourceProfile = useMemo(
     () => (wallet ? getSourceProfileForWallet(wallet) : null),
@@ -129,6 +143,66 @@ export default function RegisterPage() {
       const signature = await signAndSendTx(tx);
 
       setStep("confirming");
+      let contextWarning: string | undefined;
+      let savedContextHash: string | undefined;
+      let savedContextMemoSignature: string | undefined;
+
+      try {
+        const contextPayload = {
+          sourceId: sourceProfile.sourceId,
+          sourceName: sourceProfile.sourceName,
+          transactionSignature: signature,
+          contentFingerprint: videoHash,
+          originalFileName: file.name,
+          claim: contextClaim,
+        };
+        const contextHash = await createBrowserContextHash({
+          watermarkId,
+          ...contextPayload,
+          registeredBy: wallet,
+        });
+        const contextMemoSignature = await sendContextMemo(
+          new PublicKey(wallet),
+          watermarkId,
+          contextHash,
+        );
+        savedContextHash = contextHash;
+        savedContextMemoSignature = contextMemoSignature;
+        const auth = await signWalletAuth({
+          action: "save-context",
+          wallet,
+          watermarkId,
+          payload: {
+            ...contextPayload,
+            contextHash,
+            contextMemoSignature,
+          },
+        });
+        const contextResponse = await fetch("/api/context-records", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            watermarkId,
+            sourceId: contextPayload.sourceId,
+            sourceName: contextPayload.sourceName,
+            registeredBy: wallet,
+            transactionSignature: contextPayload.transactionSignature,
+            contentFingerprint: contextPayload.contentFingerprint,
+            contextHash,
+            contextMemoSignature,
+            originalFileName: contextPayload.originalFileName,
+            claim: contextPayload.claim,
+            auth,
+          }),
+        });
+
+        if (!contextResponse.ok) {
+          const body = await contextResponse.json().catch(() => null);
+          contextWarning = body?.error ?? "Context record could not be saved.";
+        }
+      } catch (caughtError: any) {
+        contextWarning = caughtError.message ?? "Context record could not be saved.";
+      }
 
       setResult({
         watermarkId,
@@ -137,6 +211,9 @@ export default function RegisterPage() {
         explorerUrl: `https://explorer.solana.com/tx/${signature}?cluster=devnet`,
         downloadUrl: URL.createObjectURL(watermarkedBlob),
         registeredAt: new Date().toLocaleString("en-US"),
+        contextHash: savedContextHash,
+        contextMemoSignature: savedContextMemoSignature,
+        contextWarning,
       });
       setWatermarkProgress(null);
       setWatermarkStartedAt(null);
@@ -164,6 +241,10 @@ export default function RegisterPage() {
       ? `Frame ${Math.min(watermarkProgress.currentFrame, watermarkProgress.totalFrames)} of ${watermarkProgress.totalFrames}`
       : null;
 
+  const updateContextClaim = (field: keyof ContextClaim, value: string) => {
+    setContextClaim((current) => ({ ...current, [field]: value }));
+  };
+
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-12">
       <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -171,8 +252,8 @@ export default function RegisterPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-blue-700">Source registration</p>
           <h1 className="text-3xl font-semibold text-slate-950">Register a news video</h1>
           <p className="max-w-2xl text-sm leading-6 text-slate-600">
-            Upload the original footage, bind it to your assigned source identity, and publish a
-            provenance record on Solana devnet.
+            Upload the original footage, bind it to your wallet-based source identity, and publish
+            a provenance record on Solana devnet.
           </p>
         </header>
 
@@ -203,18 +284,83 @@ export default function RegisterPage() {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-950">Assigned source</h2>
+            <h2 className="text-sm font-semibold text-slate-950">Source identity</h2>
             {sourceProfile ? (
-              <div className="mt-3 space-y-2">
-                <p className="text-lg font-semibold text-slate-950">{sourceProfile.sourceName}</p>
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-lg font-semibold text-slate-950">{sourceProfile.sourceName}</p>
+                  <span
+                    className={`rounded-full px-2 py-1 text-xs font-medium ${
+                      sourceProfile.trust.verifiedByVeritas
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-amber-50 text-amber-700"
+                    }`}
+                  >
+                    {sourceProfile.trust.tierName}
+                  </span>
+                </div>
                 <p className="text-sm text-slate-600">{sourceProfile.label}</p>
+                <p className="text-xs leading-5 text-slate-500">{sourceProfile.trust.description}</p>
                 <p className="font-mono text-xs text-slate-400">source_id: {sourceProfile.sourceId}</p>
               </div>
             ) : (
               <p className="mt-3 text-sm leading-6 text-slate-500">
-                Connect a wallet to load the source identity assigned by Veritas.
+                Connect a wallet to load its source identity. Unknown wallets register as Tier 2
+                independent sources.
               </p>
             )}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-950">Context claims</h2>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-500">Claimed location</span>
+              <input
+                value={contextClaim.location ?? ""}
+                onChange={(event) => updateContextClaim("location", event.target.value)}
+                placeholder="City, region, or venue"
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium text-slate-500">Claimed event date</span>
+              <input
+                type="date"
+                value={contextClaim.eventDate ?? ""}
+                onChange={(event) => updateContextClaim("eventDate", event.target.value)}
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <label className="space-y-1 md:col-span-2">
+              <span className="text-xs font-medium text-slate-500">Who or what is this about?</span>
+              <input
+                value={contextClaim.subject ?? ""}
+                onChange={(event) => updateContextClaim("subject", event.target.value)}
+                placeholder="Person, organization, protest, incident, briefing..."
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <label className="space-y-1 md:col-span-2">
+              <span className="text-xs font-medium text-slate-500">Short description</span>
+              <textarea
+                value={contextClaim.description ?? ""}
+                onChange={(event) => updateContextClaim("description", event.target.value)}
+                rows={3}
+                placeholder="Briefly describe what the clip is claimed to show."
+                className="w-full resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <label className="space-y-1 md:col-span-2">
+              <span className="text-xs font-medium text-slate-500">Reference URL</span>
+              <input
+                value={contextClaim.referenceUrl ?? ""}
+                onChange={(event) => updateContextClaim("referenceUrl", event.target.value)}
+                placeholder="https://..."
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
           </div>
         </section>
 
@@ -387,8 +533,11 @@ export default function RegisterPage() {
             <div className="space-y-2 rounded-md border border-emerald-100 bg-white p-3 text-xs">
               {([
                 ["Source", sourceProfile?.sourceName ?? ""],
+                ["Trust tier", sourceProfile?.trust.tierName ?? ""],
                 ["Watermark ID", result.watermarkId],
-                ["SHA-256", result.videoHash.slice(0, 32) + "..."],
+                ["Stored fingerprint", result.videoHash],
+                ...(result.contextHash ? [["Context hash", result.contextHash] as [string, string]] : []),
+                ...(result.contextMemoSignature ? [["Context memo", result.contextMemoSignature] as [string, string]] : []),
                 ["Registered", result.registeredAt],
               ] as [string, string][]).map(([label, value]) => (
                 <div key={label} className="flex gap-2">
@@ -397,6 +546,15 @@ export default function RegisterPage() {
                 </div>
               ))}
             </div>
+            {result.contextWarning ? (
+              <div className="rounded-md border border-amber-100 bg-white px-3 py-2 text-xs text-amber-800">
+                Solana registration succeeded, but the context record was not saved: {result.contextWarning}
+              </div>
+            ) : (
+              <div className="rounded-md border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-800">
+                Context claims were saved for verification.
+              </div>
+            )}
             <div className="flex gap-3">
               <a
                 href={result.explorerUrl}

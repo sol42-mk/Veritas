@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veritas Video Check</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Veritas</p>
+        <h1>Video check</h1>
+      </header>
+
+      <section id="video-context" class="panel muted">
+        Looking for a video on this page...
+      </section>
+
+      <button id="verify-button" type="button">Verify selected video</button>
+      <button id="open-page-button" type="button" class="secondary">Open full verifier</button>
+
+      <section id="status" class="panel"></section>
+      <section id="result" class="panel hidden"></section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

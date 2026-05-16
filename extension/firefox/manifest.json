@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Veritas Video Check",
+  "version": "0.1.0",
+  "description": "Select videos on a page and verify them with Veritas.",
+  "permissions": ["activeTab", "tabs"],
+  "action": {
+    "default_title": "Veritas Video Check",
+    "default_popup": "popup.html"
+  },
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "veritas-video-check@example.local"
+    }
+  }
+}

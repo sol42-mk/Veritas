@@ -28,9 +28,12 @@ pnpm-debug.log*
 # Python worker cache
 __pycache__/
 *.py[cod]
+.venv*/
 
 # Local test videos
 videos/
+veritas-video-tests/
+.veritas-data/
 
 # OS/editor noise
 .DS_Store

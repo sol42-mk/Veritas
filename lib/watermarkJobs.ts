@@ -15,6 +15,9 @@ export interface WatermarkJobSnapshot {
   totalFrames?: number;
   watermarkId?: string;
   videoHash?: string;
+  sha256Hash?: string;
+  perceptualHash?: string;
+  fingerprintAlgorithm?: "videohash" | "sha256";
   method?: "metadata+dct-spread-spectrum" | "metadata-only";
   warning?: string;
   error?: string;
@@ -94,6 +97,9 @@ async function runWatermarkJob(job: WatermarkJob, file: File) {
       progress: 1,
       watermarkId: result.watermarkId,
       videoHash: result.videoHash,
+      sha256Hash: result.sha256Hash,
+      perceptualHash: result.perceptualHash,
+      fingerprintAlgorithm: result.fingerprintAlgorithm,
       method: result.robust ? "metadata+dct-spread-spectrum" : "metadata-only",
       warning: result.warning,
     });

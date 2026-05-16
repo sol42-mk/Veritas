@@ -1,25 +1,37 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   extractWatermark,
   fetchVideoRecord,
   type ExtractedWatermark,
   type VideoRecord,
 } from "@/lib/veritas";
+import { getSourceProfileForWallet } from "@/lib/sourceRegistry";
+import { compareContentFingerprints, parseContentFingerprint, type FingerprintComparison } from "@/lib/contentFingerprint";
+import type { ContextFlagReason, StoredContextRecord } from "@/lib/contextTypes";
+import { connectPhantom, getConnectedWallet, signWalletAuth } from "@/lib/solana";
 
-type Status = "idle" | "extracting" | "checking" | "verified" | "not-found" | "error";
+type Status = "idle" | "extracting" | "checking" | "verified" | "not-found" | "mismatch" | "error";
 
 interface VerificationResult {
   watermarkId: string;
   record: VideoRecord;
   extraction?: ExtractedWatermark;
   uploadedHash?: string;
+  fingerprintCheck?: FingerprintComparison;
+  contextRecord?: StoredContextRecord | null;
 }
 
 interface AttemptedExtraction {
   watermarkId: string;
   extraction?: ExtractedWatermark;
+}
+
+interface ExtensionSourceContext {
+  sourceUrl: string;
+  pageUrl: string;
+  pageHost: string;
 }
 
 const STATUS_LABELS: Record<Status, string> = {
@@ -28,6 +40,7 @@ const STATUS_LABELS: Record<Status, string> = {
   checking: "Checking Solana devnet...",
   verified: "Record found",
   "not-found": "No record found",
+  mismatch: "Fingerprint mismatch",
   error: "Verification failed",
 };
 
@@ -39,6 +52,17 @@ function isValidWatermarkId(value: string): boolean {
   return /^[a-f0-9]{32}$/i.test(value.trim());
 }
 
+async function fetchContextRecord(watermarkId: string): Promise<StoredContextRecord | null> {
+  const response = await fetch(`/api/context-records?watermarkId=${encodeURIComponent(watermarkId)}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) return null;
+
+  const body = await response.json().catch(() => null) as { record?: StoredContextRecord | null } | null;
+  return body?.record ?? null;
+}
+
 export default function VerifyPage() {
   const [file, setFile] = useState<File | null>(null);
   const [manualWatermarkId, setManualWatermarkId] = useState("");
@@ -47,11 +71,38 @@ export default function VerifyPage() {
   const [attemptedExtraction, setAttemptedExtraction] = useState<AttemptedExtraction | null>(null);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [flagReason, setFlagReason] = useState<ContextFlagReason>("location");
+  const [flagDetails, setFlagDetails] = useState("");
+  const [flagMessage, setFlagMessage] = useState("");
+  const [citationWallet, setCitationWallet] = useState<string | null>(null);
+  const [citationNote, setCitationNote] = useState("");
+  const [citationMessage, setCitationMessage] = useState("");
+  const [extensionSource, setExtensionSource] = useState<ExtensionSourceContext | null>(null);
+
+  useEffect(() => {
+    getConnectedWallet().then(setCitationWallet);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const watermarkId = params.get("watermarkId");
+    if (watermarkId && isValidWatermarkId(watermarkId)) {
+      setManualWatermarkId(watermarkId);
+    }
+    const sourceUrl = params.get("sourceUrl") ?? "";
+    const pageUrl = params.get("pageUrl") ?? "";
+    const pageHost = params.get("pageHost") ?? "";
+    if (sourceUrl || pageUrl || pageHost) {
+      setExtensionSource({ sourceUrl, pageUrl, pageHost });
+    }
+  }, []);
 
   const resetResult = () => {
     setResult(null);
     setAttemptedExtraction(null);
     setError("");
+    setFlagMessage("");
+    setCitationMessage("");
     setStatus("idle");
   };
 
@@ -97,7 +148,19 @@ export default function VerifyPage() {
     }
 
     const uploadedHash = extraction?.uploadedHash;
-    setResult({ watermarkId: normalizedWatermarkId, record, extraction, uploadedHash });
+    const contextRecord = await fetchContextRecord(normalizedWatermarkId);
+    const fingerprintCheck = extraction
+      ? compareContentFingerprints(record.videoHash, extraction.uploadedFingerprint)
+      : undefined;
+
+    if (fingerprintCheck && !fingerprintCheck.matches) {
+      setResult({ watermarkId: normalizedWatermarkId, record, extraction, uploadedHash, fingerprintCheck, contextRecord });
+      setError("");
+      setStatus("mismatch");
+      return;
+    }
+
+    setResult({ watermarkId: normalizedWatermarkId, record, extraction, uploadedHash, fingerprintCheck, contextRecord });
     setError("");
     setStatus("verified");
   };
@@ -141,7 +204,103 @@ export default function VerifyPage() {
     }
   };
 
+  const handleSubmitFlag = async () => {
+    if (!result?.contextRecord) return;
+
+    try {
+      setFlagMessage("");
+      const response = await fetch("/api/context-records/flags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watermarkId: result.watermarkId,
+          reason: flagReason,
+          details: flagDetails,
+        }),
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Could not save flag.");
+      }
+
+      setResult({ ...result, contextRecord: body.record });
+      setFlagDetails("");
+      setFlagMessage("Flag saved.");
+    } catch (caughtError: any) {
+      setFlagMessage(caughtError.message ?? "Could not save flag.");
+    }
+  };
+
+  const handleConnectCitationWallet = async () => {
+    try {
+      setCitationMessage("");
+      const connectedWallet = await connectPhantom();
+      setCitationWallet(connectedWallet);
+    } catch (caughtError: any) {
+      setCitationMessage(caughtError.message ?? "Could not connect Phantom.");
+    }
+  };
+
+  const handleSubmitCitation = async () => {
+    if (!result?.contextRecord || !citationWallet) return;
+
+    try {
+      setCitationMessage("");
+      const auth = await signWalletAuth({
+        action: "cite-context",
+        wallet: citationWallet,
+        watermarkId: result.watermarkId,
+        payload: { note: citationNote },
+      });
+      const response = await fetch("/api/context-records/citations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watermarkId: result.watermarkId,
+          citedBy: citationWallet,
+          note: citationNote,
+          auth,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Could not save citation.");
+      }
+
+      setResult({ ...result, contextRecord: body.record });
+      setCitationNote("");
+      setCitationMessage("Chain-of-custody citation saved.");
+    } catch (caughtError: any) {
+      setCitationMessage(caughtError.message ?? "Could not save citation.");
+    }
+  };
+
   const isWorking = status === "extracting" || status === "checking";
+  const verifiedSourceProfile = result
+    ? getSourceProfileForWallet(result.record.registeredBy)
+    : null;
+  const citationSourceProfile = citationWallet
+    ? getSourceProfileForWallet(citationWallet)
+    : null;
+  const contextEntries = result?.contextRecord
+    ? ([
+        ["Claimed location", result.contextRecord.claim.location],
+        ["Claimed event date", result.contextRecord.claim.eventDate],
+        ["Subject", result.contextRecord.claim.subject],
+        ["Description", result.contextRecord.claim.description],
+        ["Reference URL", result.contextRecord.claim.referenceUrl],
+      ] as [string, string | undefined][])
+        .filter(([, value]) => Boolean(value))
+    : [];
+  const extensionNeedsManualUpload = Boolean(
+    extensionSource && (
+      !extensionSource.sourceUrl ||
+      extensionSource.sourceUrl.startsWith("blob:") ||
+      extensionSource.pageHost.includes("facebook.com")
+    )
+  );
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-12">
@@ -150,9 +309,44 @@ export default function VerifyPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-blue-700">Verification</p>
           <h1 className="text-3xl font-semibold text-slate-950">Verify a news video</h1>
           <p className="max-w-2xl text-sm leading-6 text-slate-600">
-            Check whether a Veritas watermark maps to a registered Solana devnet provenance record.
+            Check whether a Veritas watermark maps to a registered Solana devnet provenance record
+            and see the source trust tier for the wallet that registered it.
           </p>
         </header>
+
+        {extensionSource && (
+          <section className="rounded-lg border border-blue-100 bg-white p-4">
+            <p className="text-sm font-semibold text-slate-950">Video selected from browser extension</p>
+            <div className="mt-3 space-y-2 text-xs text-slate-600">
+              {extensionSource.pageHost && (
+                <p>
+                  <span className="text-slate-400">Page</span>{" "}
+                  <span className="font-mono">{extensionSource.pageHost}</span>
+                </p>
+              )}
+              {extensionSource.sourceUrl && (
+                <p className="break-all">
+                  <span className="text-slate-400">Detected media URL</span>{" "}
+                  <span className="font-mono">{extensionSource.sourceUrl}</span>
+                </p>
+              )}
+            </div>
+            {extensionNeedsManualUpload ? (
+              <div className="mt-3 rounded-md border border-amber-100 bg-amber-50 p-3">
+                <p className="text-sm font-medium text-amber-900">Manual upload needed</p>
+                <p className="mt-1 text-xs leading-5 text-amber-800">
+                  This page does not expose a normal downloadable video file to the extension. Use
+                  Facebook's own download option or another tool you are allowed to use, then upload
+                  the downloaded video file here for verification.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                Direct URL import is not enabled yet. Upload the downloaded file here to verify it.
+              </p>
+            )}
+          </section>
+        )}
 
         <section
           onDragOver={(event) => {
@@ -312,13 +506,50 @@ export default function VerifyPage() {
           </div>
         )}
 
+        {status === "mismatch" && result && (
+          <div className="space-y-3 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-medium text-amber-900">
+              We couldn't verify the video as matching the registered Veritas record.
+            </p>
+            <p className="text-xs leading-5 text-amber-800">
+              Note: This does not mean that the video is necessarily untruthful. It means the
+              watermark ID was found, but the uploaded video did not match the registered content
+              fingerprint closely enough.
+            </p>
+            <div className="rounded-md border border-amber-100 bg-white p-3 text-xs text-slate-600">
+              <p className="font-medium text-slate-950">Fingerprint check</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div>
+                  <span className="block text-slate-400">Algorithm</span>
+                  <span className="font-mono">{result.fingerprintCheck?.algorithm ?? "unknown"}</span>
+                </div>
+                <div>
+                  <span className="block text-slate-400">Distance</span>
+                  <span className="font-mono">
+                    {typeof result.fingerprintCheck?.distance === "number"
+                      ? result.fingerprintCheck.distance
+                      : "not available"}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-slate-400">Threshold</span>
+                  <span className="font-mono">{result.fingerprintCheck?.threshold ?? "not available"}</span>
+                </div>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-amber-800">
+                {result.fingerprintCheck?.message}
+              </p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3">
             <p className="whitespace-pre-wrap text-sm text-red-700">{error}</p>
           </div>
         )}
 
-        {result && (
+        {status === "verified" && result && (
           <section className="space-y-4 rounded-lg border border-emerald-100 bg-emerald-50 p-5">
             <div className="flex items-center gap-2">
               <svg className="h-5 w-5 flex-shrink-0 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -340,12 +571,32 @@ export default function VerifyPage() {
               </div>
 
               <div className="rounded-md border border-emerald-100 bg-white p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Trust tier</p>
+                <p className="mt-2 text-sm font-semibold text-slate-950">
+                  {verifiedSourceProfile?.trust.tierName}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {verifiedSourceProfile?.trust.description}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-md border border-emerald-100 bg-white p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Registered</p>
                 <p className="mt-2 text-sm font-semibold text-slate-950">
                   {formatTimestamp(result.record.timestamp)}
                 </p>
                 <p className="mt-1 font-mono text-xs text-slate-500 break-all">
                   {result.record.registeredBy}
+                </p>
+              </div>
+
+              <div className="rounded-md border border-emerald-100 bg-white p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Verification meaning</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  This confirms a Veritas record exists for the recovered watermark. It does not
+                  independently prove that every claim about the video is true.
                 </p>
               </div>
             </div>
@@ -386,10 +637,177 @@ export default function VerifyPage() {
               </div>
             )}
 
+            <div className="rounded-md border border-emerald-100 bg-white p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Context claims</p>
+              {result.contextRecord && contextEntries.length > 0 ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  {contextEntries.map(([label, value]) => (
+                    <div key={label} className="grid gap-1 sm:grid-cols-[10rem_1fr]">
+                      <span className="text-slate-400">{label}</span>
+                      {label === "Reference URL" && value ? (
+                        <a
+                          href={value}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-blue-700 hover:text-blue-800"
+                        >
+                          {value}
+                        </a>
+                      ) : (
+                        <span className="break-words text-slate-900">{value}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  No extra context claims were saved for this record.
+                </p>
+              )}
+              {result.contextRecord?.contextHash && (
+                <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs">
+                  <div className="grid gap-1 sm:grid-cols-[10rem_1fr]">
+                    <span className="text-slate-400">Context hash</span>
+                    <span className="break-all font-mono text-slate-900">{result.contextRecord.contextHash}</span>
+                  </div>
+                  {result.contextRecord.contextMemoSignature && (
+                    <div className="grid gap-1 sm:grid-cols-[10rem_1fr]">
+                      <span className="text-slate-400">Solana memo</span>
+                      <a
+                        href={`https://explorer.solana.com/tx/${result.contextRecord.contextMemoSignature}?cluster=devnet`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="break-all font-mono text-blue-700 hover:text-blue-800"
+                      >
+                        {result.contextRecord.contextMemoSignature}
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {result.contextRecord && (
+              <div className="rounded-md border border-emerald-100 bg-white p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Chain of custody</p>
+                  <span className="text-xs text-slate-500">
+                    {result.contextRecord.citations.length} citation{result.contextRecord.citations.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {result.contextRecord.citations.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {result.contextRecord.citations.map((citation) => (
+                      <div key={citation.id} className="rounded-md bg-slate-50 p-3 text-xs">
+                        <div className="flex flex-wrap gap-2 text-slate-500">
+                          <span className="font-medium text-slate-700">{citation.citedBySourceName}</span>
+                          <span>{new Date(citation.createdAt).toLocaleString("en-US")}</span>
+                        </div>
+                        <p className="mt-1 break-all font-mono text-slate-500">{citation.citedBy}</p>
+                        {citation.note && <p className="mt-1 text-slate-700">{citation.note}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 grid gap-3">
+                  {!citationWallet ? (
+                    <button
+                      onClick={handleConnectCitationWallet}
+                      className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                    >
+                      Connect wallet to cite
+                    </button>
+                  ) : (
+                    <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+                      <span className="font-medium text-slate-900">
+                        {citationSourceProfile?.trust.tierName}
+                      </span>
+                      <p className="mt-1 break-all font-mono">{citationWallet}</p>
+                    </div>
+                  )}
+                  <textarea
+                    value={citationNote}
+                    onChange={(event) => setCitationNote(event.target.value)}
+                    rows={2}
+                    placeholder="Optional citation note from a verified newsroom."
+                    className="resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <button
+                    onClick={handleSubmitCitation}
+                    disabled={!citationWallet || citationSourceProfile?.trust.tier !== 1}
+                    className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Add chain-of-custody citation
+                  </button>
+                  {citationMessage && (
+                    <p className="text-xs text-slate-500">{citationMessage}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {result.contextRecord && (
+              <div className="rounded-md border border-emerald-100 bg-white p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Flags</p>
+                  <span className="text-xs text-slate-500">
+                    {result.contextRecord.flags.length} saved
+                  </span>
+                </div>
+                {result.contextRecord.flags.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {result.contextRecord.flags.map((flag) => (
+                      <div key={flag.id} className="rounded-md bg-slate-50 p-3 text-xs">
+                        <div className="flex flex-wrap gap-2 text-slate-500">
+                          <span className="font-medium text-slate-700">{flag.reason}</span>
+                          <span>{new Date(flag.createdAt).toLocaleString("en-US")}</span>
+                        </div>
+                        <p className="mt-1 text-slate-700">{flag.details}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 grid gap-3">
+                  <select
+                    value={flagReason}
+                    onChange={(event) => setFlagReason(event.target.value as ContextFlagReason)}
+                    className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="location">Claimed location does not match</option>
+                    <option value="date">Claimed date does not match</option>
+                    <option value="subject">Claimed subject does not match</option>
+                    <option value="description">Description is misleading</option>
+                    <option value="other">Other issue</option>
+                  </select>
+                  <textarea
+                    value={flagDetails}
+                    onChange={(event) => setFlagDetails(event.target.value)}
+                    rows={3}
+                    placeholder="Describe the issue with the claimed context."
+                    className="resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <button
+                    onClick={handleSubmitFlag}
+                    disabled={!flagDetails.trim()}
+                    className="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Submit flag
+                  </button>
+                  {flagMessage && (
+                    <p className="text-xs text-slate-500">{flagMessage}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2 rounded-md border border-emerald-100 bg-white p-3 text-xs">
               {([
                 ["Watermark ID", result.watermarkId],
-                ["Registered original SHA-256", result.record.videoHash],
+                ["Registered content fingerprint", result.record.videoHash],
+                ["Fingerprint type", parseContentFingerprint(result.record.videoHash).algorithm],
+                ...(result.extraction?.uploadedFingerprint
+                  ? [["Uploaded content fingerprint", result.extraction.uploadedFingerprint] as [string, string]]
+                  : []),
                 ...(result.uploadedHash ? [["Uploaded file SHA-256", result.uploadedHash] as [string, string]] : []),
               ] as [string, string][]).map(([label, value]) => (
                 <div key={label} className="flex gap-2">

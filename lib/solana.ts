@@ -10,9 +10,14 @@ import {
   SystemProgram,
   clusterApiUrl,
 } from "@solana/web3.js";
+import { buildWalletAuthMessage, type WalletAuthAction, type WalletAuthProof } from "@/lib/walletAuth";
 
 export const PROGRAM_ID = new PublicKey(
   "4qBS9B7cZ5r4CeNMaRvxELmZugRroXUwRg8Ss4MP3CVi"
+);
+
+const MEMO_PROGRAM_ID = new PublicKey(
+  "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 );
 
 export const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
@@ -133,6 +138,63 @@ export async function signAndSendTx(tx: Transaction): Promise<string> {
   // Wait for confirmation
   await connection.confirmTransaction(signature, "confirmed");
   return signature;
+}
+
+export async function signWalletAuth(input: {
+  action: WalletAuthAction;
+  wallet: string;
+  watermarkId: string;
+  payload: Record<string, unknown>;
+}): Promise<WalletAuthProof> {
+  const provider = getProvider();
+  if (!provider) throw new Error("Phantom is not connected.");
+  if (typeof provider.signMessage !== "function") {
+    throw new Error("This Phantom provider does not support message signing.");
+  }
+
+  const issuedAt = new Date().toISOString();
+  const message = buildWalletAuthMessage({
+    ...input,
+    issuedAt,
+  });
+  const encodedMessage = new TextEncoder().encode(message);
+  const signed = await provider.signMessage(encodedMessage, "utf8");
+  const signature = signed?.signature;
+
+  if (!signature) {
+    throw new Error("Phantom did not return a message signature.");
+  }
+
+  return {
+    wallet: input.wallet,
+    issuedAt,
+    signature: bytesToBase64(signature),
+  };
+}
+
+export async function sendContextMemo(
+  walletPubkey: PublicKey,
+  watermarkId: string,
+  contextHash: string,
+): Promise<string> {
+  const memo = `veritas_context:${watermarkId}:${contextHash}`;
+  const tx = new Transaction().add(
+    new TransactionInstruction({
+      programId: MEMO_PROGRAM_ID,
+      keys: [{ pubkey: walletPubkey, isSigner: true, isWritable: false }],
+      data: Buffer.from(memo, "utf8"),
+    }),
+  );
+
+  tx.feePayer = walletPubkey;
+  tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  return signAndSendTx(tx);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return window.btoa(binary);
 }
 
 // ─── Fetch record ─────────────────────────────────────────────────────────
