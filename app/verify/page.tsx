@@ -78,10 +78,44 @@ export default function VerifyPage() {
   const [citationNote, setCitationNote] = useState("");
   const [citationMessage, setCitationMessage] = useState("");
   const [extensionSource, setExtensionSource] = useState<ExtensionSourceContext | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
+  const [votes, setVotes] = useState<{ likes: number; dislikes: number; userVote: 1 | -1 | 0 } | null>(null);
 
   useEffect(() => {
     getConnectedWallet().then(setCitationWallet);
   }, []);
+
+  function getOrCreateVoterId(): string {
+    const key = "veritasVoterId";
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(key, id);
+    }
+    return id;
+  }
+
+  async function loadVotes(sourceId: string) {
+    const voterId = getOrCreateVoterId();
+    const res = await fetch(
+      `/api/source-votes?sourceId=${encodeURIComponent(sourceId)}&voterId=${encodeURIComponent(voterId)}`,
+    ).catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json().catch(() => null);
+    if (data) setVotes(data);
+  }
+
+  async function handleVote(sourceId: string, vote: 1 | -1) {
+    const voterId = getOrCreateVoterId();
+    const res = await fetch("/api/source-votes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceId, voterId, vote }),
+    }).catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json().catch(() => null);
+    if (data) setVotes(data);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -103,6 +137,7 @@ export default function VerifyPage() {
     setError("");
     setFlagMessage("");
     setCitationMessage("");
+    setVotes(null);
     setStatus("idle");
   };
 
@@ -163,6 +198,7 @@ export default function VerifyPage() {
     setResult({ watermarkId: normalizedWatermarkId, record, extraction, uploadedHash, fingerprintCheck, contextRecord });
     setError("");
     setStatus("verified");
+    loadVotes(record.sourceId);
   };
 
   const handleVerifyFile = async () => {
@@ -581,6 +617,35 @@ export default function VerifyPage() {
               </div>
             </div>
 
+            <div className="flex items-center gap-3 rounded-md border border-emerald-100 bg-white p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400 w-40 flex-shrink-0">
+                Source credibility
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => result && handleVote(result.record.sourceId, 1)}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    votes?.userVote === 1
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  👍 {votes ? votes.likes : "—"}
+                </button>
+                <button
+                  onClick={() => result && handleVote(result.record.sourceId, -1)}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    votes?.userVote === -1
+                      ? "border-red-300 bg-red-50 text-red-700"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  👎 {votes ? votes.dislikes : "—"}
+                </button>
+                <span className="text-xs text-slate-400">Was this source accurate?</span>
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-md border border-emerald-100 bg-white p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Registered</p>
@@ -609,31 +674,39 @@ export default function VerifyPage() {
                     ? "MP4 metadata watermark"
                     : "DCT spread-spectrum visual watermark"}
                 </p>
-                <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
-                  <div>
-                    <span className="block text-slate-400">Method</span>
-                    <span className="font-mono">{result.extraction.method}</span>
-                  </div>
-                  <div>
-                    <span className="block text-slate-400">Confidence</span>
-                    <span className="font-mono">
-                      {typeof result.extraction.confidence === "number"
-                        ? `${(result.extraction.confidence * 100).toFixed(1)}%`
-                        : "not needed"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-slate-400">Frames</span>
-                    <span className="font-mono">
-                      {result.extraction.framesAnalyzed ?? "not sampled"}
-                    </span>
-                  </div>
-                </div>
-                <p className="mt-3 text-xs leading-5 text-slate-500">
+                <p className="mt-1 text-xs leading-5 text-slate-500">
                   {result.extraction.method === "metadata"
                     ? "Metadata was found, so DCT fallback was not needed for this file."
                     : "Metadata was missing or unreadable, so verification used the visual DCT watermark."}
                 </p>
+                <button
+                  onClick={() => setShowDebug((v) => !v)}
+                  className="mt-3 text-xs font-medium text-slate-400 hover:text-slate-600"
+                >
+                  {showDebug ? "Hide debug info ▴" : "Debug info ▾"}
+                </button>
+                {showDebug && (
+                  <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                    <div>
+                      <span className="block text-slate-400">Method</span>
+                      <span className="font-mono">{result.extraction.method}</span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-400">Confidence</span>
+                      <span className="font-mono">
+                        {typeof result.extraction.confidence === "number"
+                          ? `${(result.extraction.confidence * 100).toFixed(1)}%`
+                          : "not needed"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-400">Frames</span>
+                      <span className="font-mono">
+                        {result.extraction.framesAnalyzed ?? "not sampled"}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

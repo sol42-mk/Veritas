@@ -14,6 +14,8 @@ main {
   display: grid;
   gap: 12px;
   padding: 14px;
+  max-height: 560px;
+  overflow-y: auto;
 }
 
 header {
@@ -73,7 +75,7 @@ button.secondary {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .success {
@@ -113,4 +115,247 @@ button.secondary {
 .mono {
   word-break: break-all;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Loading spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #475569;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(29, 78, 216, 0.2);
+  border-top-color: #1d4ed8;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+.loading-label {
+  font-size: 12px;
+}
+
+/* Result source name */
+.source-name {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+/* Action buttons (open in tab) */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.action-btn {
+  width: 100%;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.action-btn:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+/* Debug info toggle */
+.debug-toggle {
+  width: auto;
+  padding: 3px 8px;
+  margin-top: 2px;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.debug-toggle:hover {
+  background: #f1f5f9;
+}
+
+/* Failure message text */
+.result-msg {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+/* Find info button */
+.find-info-btn {
+  margin-top: 4px;
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.find-info-btn:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+/* Analysis loading row */
+.analysis-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 4px;
+  font-size: 12px;
+  color: #475569;
+}
+
+/* Analysis result */
+.analysis-result {
+  margin-top: 8px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+
+.analysis-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.analysis-text {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #1e293b;
+  white-space: pre-wrap;
+}
+
+/* Sources */
+.analysis-sources {
+  margin-bottom: 10px;
+}
+
+.analysis-sources-label {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.source-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  font-size: 11px;
+  color: #1d4ed8;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-link:hover {
+  text-decoration: underline;
+}
+
+/* Source credibility vote */
+.vote-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.vote-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.vote-row {
+  display: flex;
+  gap: 8px;
+}
+
+.vote-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  width: auto;
+}
+
+.vote-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.vote-btn.vote-active[data-vote="1"] {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.vote-btn.vote-active[data-vote="-1"] {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+/* Transcript disclosure */
+.analysis-transcript {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 6px;
+}
+
+.analysis-transcript summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #64748b;
+  list-style: none;
+}
+
+.analysis-transcript summary::before {
+  content: "▾ ";
+}
+
+.analysis-transcript[open] summary::before {
+  content: "▴ ";
+}
+
+.analysis-transcript p {
+  margin: 6px 0 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }

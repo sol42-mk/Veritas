@@ -3,7 +3,7 @@
   "name": "Veritas Video Check",
   "version": "0.1.0",
   "description": "Select videos on a page and verify them with Veritas.",
-  "permissions": ["activeTab", "tabs"],
+  "permissions": ["activeTab", "tabs", "contextMenus", "storage"],
   "action": {
     "default_title": "Veritas Video Check",
     "default_popup": "popup.html"
